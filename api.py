@@ -76,4 +76,4 @@ async def run_system(request: RunRequest):
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Agentic AI System API"}
+    return {"message": "Agentic AI System API","status": "OK"}

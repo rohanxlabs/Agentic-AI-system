@@ -1,0 +1,176 @@
+/**
+ * Design tokens — CSS custom properties for the entire application.
+ * Tailwind v4 uses these via @theme inline.
+ */
+
+@import "tailwindcss";
+
+:root {
+  /* ── Brand ── */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-brand-950: #172554;
+
+  /* ── Dark palette ── */
+  --color-dark-1: #09090b;
+  --color-dark-2: #0c0c0f;
+  --color-dark-3: #121215;
+  --color-dark-4: #18181c;
+  --color-dark-5: #1e1e23;
+  --color-dark-6: #27272c;
+  --color-dark-7: #2e2e35;
+  --color-dark-8: #3a3a42;
+  --color-dark-9: #52525b;
+  --color-dark-10: #71717a;
+  --color-dark-11: #a1a1aa;
+  --color-dark-12: #e4e4e7;
+
+  /* ── Light palette ── */
+  --color-light-1: #ffffff;
+  --color-light-2: #fafafa;
+  --color-light-3: #f4f4f5;
+  --color-light-4: #e4e4e7;
+  --color-light-5: #d4d4d8;
+  --color-light-6: #a1a1aa;
+  --color-light-7: #71717a;
+  --color-light-8: #52525b;
+  --color-light-9: #3f3f46;
+  --color-light-10: #27272a;
+  --color-light-11: #18181b;
+  --color-light-12: #09090b;
+
+  /* ── Semantic (dark-first) ── */
+  --color-background: var(--color-dark-1);
+  --color-foreground: var(--color-dark-12);
+  --color-muted: var(--color-dark-5);
+  --color-muted-foreground: var(--color-dark-11);
+  --color-card: var(--color-dark-2);
+  --color-card-foreground: var(--color-dark-12);
+  --color-popover: var(--color-dark-2);
+  --color-popover-foreground: var(--color-dark-12);
+  --color-border: var(--color-dark-6);
+  --color-input: var(--color-dark-6);
+  --color-primary: var(--color-brand-500);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-dark-5);
+  --color-secondary-foreground: var(--color-dark-12);
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-accent: var(--color-dark-5);
+  --color-accent-foreground: var(--color-dark-12);
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-ring: var(--color-brand-500);
+
+  /* ── Radius ── */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+}
+
+[data-theme="light"] {
+  --color-background: var(--color-light-1);
+  --color-foreground: var(--color-light-11);
+  --color-muted: var(--color-light-3);
+  --color-muted-foreground: var(--color-light-7);
+  --color-card: var(--color-light-1);
+  --color-card-foreground: var(--color-light-11);
+  --color-popover: var(--color-light-1);
+  --color-popover-foreground: var(--color-light-11);
+  --color-border: var(--color-light-4);
+  --color-input: var(--color-light-4);
+  --color-primary: var(--color-brand-600);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-light-3);
+  --color-secondary-foreground: var(--color-light-11);
+  --color-accent: var(--color-light-3);
+  --color-accent-foreground: var(--color-light-11);
+  --color-ring: var(--color-brand-600);
+}
+
+@theme inline {
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-foreground);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-muted-foreground);
+  --color-card: var(--color-card);
+  --color-card-foreground: var(--color-card-foreground);
+  --color-popover: var(--color-popover);
+  --color-popover-foreground: var(--color-popover-foreground);
+  --color-border: var(--color-border);
+  --color-input: var(--color-input);
+  --color-primary: var(--color-primary);
+  --color-primary-foreground: var(--color-primary-foreground);
+  --color-secondary: var(--color-secondary);
+  --color-secondary-foreground: var(--color-secondary-foreground);
+  --color-destructive: var(--color-destructive);
+  --color-destructive-foreground: var(--color-destructive-foreground);
+  --color-accent: var(--color-accent);
+  --color-accent-foreground: var(--color-accent-foreground);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-ring: var(--color-ring);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-inter);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+html {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-dark-6) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--color-dark-6);
+    border-radius: var(--radius-xl);
+  }
+}

@@ -7,7 +7,7 @@ from typing import Optional
 from groq import Groq
 from dotenv import load_dotenv
 
-from config.config import MODEL_NAME
+from config.config import MODEL_NAME, RETRY_ATTEMPTS, API_TIMEOUT
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -43,18 +43,36 @@ class GroqLLM:
             Model response text
 
         Raises:
-            Exception: If API call fails
+            Exception: If API call fails after retries
         """
-        try:
-            response = self.client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            # Add delay to prevent rate limiting
-            time.sleep(2.0)  # 2 second delay between API calls
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Groq API error: {e}")
-            raise
+        max_retries = RETRY_ATTEMPTS
+        last_exception = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=API_TIMEOUT,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                is_rate_limit = (
+                    getattr(e, "__class__", None).__name__ == "RateLimitError"
+                    or getattr(e, "status_code", None) == 429
+                    or "rate limit" in str(e).lower()
+                )
+                if not is_rate_limit:
+                    raise
+                last_exception = e
+                if attempt < max_retries:
+                    wait = 2 ** (attempt - 1)
+                    logger.warning(
+                        f"Rate limit hit (attempt {attempt}/{max_retries}), retrying in {wait}s"
+                    )
+                    time.sleep(wait)
+
+        logger.error(f"Rate limit exceeded after {max_retries} attempts")
+        raise last_exception

@@ -40,6 +40,17 @@ class LongTermMemory:
         """
         return "\n".join([entry["content"] for entry in self.store])
 
+    def recall_recent(self, n: int = 5) -> str:
+        """Retrieve the last n stored entries.
+
+        Args:
+            n: Number of recent entries to return
+
+        Returns:
+            Joined text from the last n entries
+        """
+        return "\n".join([entry["content"] for entry in self.store[-n:]])
+
     def _persist(self) -> None:
         """Write memory to file."""
         try:

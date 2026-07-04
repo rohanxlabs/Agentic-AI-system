@@ -1,7 +1,8 @@
 """FastAPI application for the Agentic AI System."""
 import logging
+import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -29,31 +30,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Components will be initialized lazily
-_manager = None
-
-def get_manager():
-    """Get or initialize the manager instance."""
-    global _manager
-    if _manager is None:
-        llm = GroqLLM()
-        stm = ShortTermMemory()
-        ltm = LongTermMemory()
-
-        planner = PlannerAgent("Planner", llm, stm, ltm)
-        executor = ExecutorAgent("Executor", llm, stm, ltm)
-        critic = CriticAgent("Critic", llm, stm, ltm)
-
-        _manager = ManagerAgent(planner, executor, critic, ltm)
-    return _manager
-
 app = FastAPI(title="Agentic AI System API", version="1.0.0")
+
+_shared_ltm = LongTermMemory()
+_sessions: dict[str, ShortTermMemory] = {}
+
 
 class RunRequest(BaseModel):
     goal: str
+    session_id: Optional[str] = None
+
 
 class RunResponse(BaseModel):
     results: List[str]
+    session_id: str
+
 
 @app.post("/run", response_model=RunResponse)
 async def run_system(request: RunRequest):
@@ -62,16 +53,30 @@ async def run_system(request: RunRequest):
         if not request.goal.strip():
             raise HTTPException(status_code=400, detail="Goal cannot be empty")
 
+        session_id = request.session_id or str(uuid.uuid4())
+        if session_id not in _sessions:
+            _sessions[session_id] = ShortTermMemory()
+
+        llm = GroqLLM()
+        stm = _sessions[session_id]
+        ltm = _shared_ltm
+
+        planner = PlannerAgent("Planner", llm, stm, ltm)
+        executor = ExecutorAgent("Executor", llm, stm, ltm)
+        critic = CriticAgent("Critic", llm, stm, ltm)
+
+        manager = ManagerAgent(planner, executor, critic, ltm)
+
         logger.info(f"Starting system with goal: {request.goal}")
-        manager = get_manager()
         results = manager.run(request.goal)
         logger.info("System completed successfully")
 
-        return RunResponse(results=results)
+        return RunResponse(results=results, session_id=session_id)
 
     except Exception as e:
         logger.exception("Unexpected error occurred")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/")
 async def root():

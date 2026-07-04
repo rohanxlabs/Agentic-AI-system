@@ -1,5 +1,6 @@
 """Web search tool implementation using DuckDuckGo."""
 import logging
+from ddgs import DDGS
 from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)

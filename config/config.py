@@ -27,6 +27,12 @@ RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", "3"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
 
+# Security Configuration
+API_AUTH_KEY = os.getenv("API_AUTH_KEY", "")
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
+
 # Validation
 if not GROQ_API_KEY:
     print("Warning: GROQ_API_KEY not set in environment variables")
+if not API_AUTH_KEY:
+    print("Warning: API_AUTH_KEY not set - API is running without authentication!")

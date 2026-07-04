@@ -1,6 +1,6 @@
 """Manager agent orchestrating the agentic system workflow."""
 import re
-from typing import Any, List
+from typing import Any, List, Generator, Dict
 from config.config import MAX_ITERATIONS
 
 
@@ -38,6 +38,22 @@ class ManagerAgent:
 
         # For complex tasks, use the full multi-step approach
         return self._run_full_mode(goal)
+        
+    def run_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
+        """Execute the goal through planning, execution, and refinement cycles, yielding progress events.
+        
+        Args:
+            goal: The goal to accomplish
+            
+        Yields:
+            Dict containing event type and content at each stage of execution
+        """
+        # For simple tasks, use streaming simple mode
+        if MAX_ITERATIONS <= 1:
+            yield from self._run_simple_mode_streaming(goal)
+        else:
+            # For complex tasks, use streaming full mode
+            yield from self._run_full_mode_streaming(goal)
 
     def _run_simple_mode(self, goal: str) -> List[str]:
         """Run in simple mode with minimal API calls.
@@ -62,6 +78,32 @@ Be thorough but concise."""
         result = self.executor.think(prompt)
         self.ltm.save(f"Simple execution: {result}")
         return [result]
+        
+    def _run_simple_mode_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
+        """Run in simple mode with streaming output.
+        
+        Args:
+            goal: The goal to accomplish
+            
+        Yields:
+            Event dicts with execution progress
+        """
+        prompt = f"""You are an expert AI assistant. Complete this task comprehensively:
+
+Goal: {goal}
+
+Provide a complete, high-quality solution with:
+1. Clear steps or implementation
+2. Best practices and considerations
+3. Any relevant examples or code
+
+Be thorough but concise."""
+        
+        yield {"type": "step_start", "step": "Executing simple mode task"}
+        result = self.executor.think(prompt)
+        self.ltm.save(f"Simple execution: {result}")
+        yield {"type": "step_result", "content": result}
+        yield {"type": "final", "results": [result]}
 
     def _run_full_mode(self, goal: str) -> List[str]:
         """Run in full agentic mode with multiple iterations.
@@ -118,6 +160,73 @@ Critique:
                     steps = next_steps
 
         return final_results
+        
+    def _run_full_mode_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
+        """Run in full agentic mode with streaming output.
+        
+        Args:
+            goal: The goal to accomplish
+            
+        Yields:
+            Event dicts with execution progress
+        """
+        yield {"type": "plan", "content": "Creating execution plan..."}
+        plan = self.planner.create_plan(goal)
+        yield {"type": "plan", "content": plan}
+        
+        steps = self._parse_steps(plan)
+        if not steps:
+            steps = [plan]
+
+        final_results: List[str] = []
+        accumulated_critiques = ""
+
+        for iteration in range(MAX_ITERATIONS):
+            iteration_results: List[str] = []
+            iteration_critiques: List[str] = []
+
+            for step in steps:
+                yield {"type": "step_start", "step": step}
+                
+                if self.enable_tools:
+                    result = self.executor.execute_task_with_tools(step)
+                else:
+                    result = self.executor.execute_task(step)
+                yield {"type": "step_result", "content": result}
+                
+                yield {"type": "critique", "content": "Evaluating result..."}
+                critique = self.critic.critique(result)
+                yield {"type": "critique", "content": critique}
+
+                if self._is_acceptable(critique):
+                    iteration_results.append(result)
+                else:
+                    improved_prompt = f"""
+Improve the result using this critique.
+
+Result:
+{result}
+
+Critique:
+{critique}
+"""
+                    improved = self.executor.think(improved_prompt)
+                    iteration_results.append(improved)
+                    iteration_critiques.append(f"Step: {step}\nCritique: {critique}")
+
+            final_results.extend(iteration_results)
+            self.ltm.save(f"Iteration {iteration}: " + "\n".join(iteration_results))
+
+            if iteration < MAX_ITERATIONS - 1 and iteration_critiques:
+                accumulated_critiques += "\n".join(iteration_critiques) + "\n"
+                yield {"type": "plan", "content": "Refining plan based on feedback..."}
+                next_plan = self.planner.think(self._plan_prompt(goal, accumulated_critiques))
+                yield {"type": "plan", "content": next_plan}
+                next_steps = self._parse_steps(next_plan)
+                if next_steps:
+                    steps = next_steps
+        
+        yield {"type": "final", "results": final_results}
 
     def _parse_steps(self, plan: str) -> List[str]:
         """Extract numbered list items from a plan string.

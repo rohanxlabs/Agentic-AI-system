@@ -7,7 +7,7 @@ from config.config import MAX_ITERATIONS
 class ManagerAgent:
     """Orchestrates planning, execution, and criticism cycle."""
 
-    def __init__(self, planner: Any, executor: Any, critic: Any, ltm: Any) -> None:
+    def __init__(self, planner: Any, executor: Any, critic: Any, ltm: Any, enable_tools: bool = True) -> None:
         """Initialize the manager agent.
 
         Args:
@@ -15,11 +15,13 @@ class ManagerAgent:
             executor: ExecutorAgent instance
             critic: CriticAgent instance
             ltm: Long-term memory instance
+            enable_tools: Whether to enable tool calling for the executor (default: True)
         """
         self.planner = planner
         self.executor = executor
         self.critic = critic
         self.ltm = ltm
+        self.enable_tools = enable_tools
 
     def run(self, goal: str) -> List[str]:
         """Execute the goal through planning, execution, and refinement cycles.
@@ -83,7 +85,10 @@ Be thorough but concise."""
             iteration_critiques: List[str] = []
 
             for step in steps:
-                result = self.executor.execute_task(step)
+                if self.enable_tools:
+                    result = self.executor.execute_task_with_tools(step)
+                else:
+                    result = self.executor.execute_task(step)
                 critique = self.critic.critique(result)
 
                 if self._is_acceptable(critique):

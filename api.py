@@ -39,6 +39,7 @@ _sessions: dict[str, ShortTermMemory] = {}
 class RunRequest(BaseModel):
     goal: str
     session_id: Optional[str] = None
+    enable_tools: bool = True
 
 
 class RunResponse(BaseModel):
@@ -65,7 +66,7 @@ async def run_system(request: RunRequest):
         executor = ExecutorAgent("Executor", llm, stm, ltm)
         critic = CriticAgent("Critic", llm, stm, ltm)
 
-        manager = ManagerAgent(planner, executor, critic, ltm)
+        manager = ManagerAgent(planner, executor, critic, ltm, enable_tools=request.enable_tools)
 
         logger.info(f"Starting system with goal: {request.goal}")
         results = manager.run(request.goal)

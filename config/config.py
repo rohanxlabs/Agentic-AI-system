@@ -23,6 +23,10 @@ MEMORY_FILE = os.getenv("MEMORY_FILE", "logs/memory.json")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
 RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", "3"))
 
+# Embeddings and Memory Configuration
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
+
 # Validation
 if not GROQ_API_KEY:
     print("Warning: GROQ_API_KEY not set in environment variables")

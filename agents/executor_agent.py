@@ -16,8 +16,15 @@ class ExecutorAgent(BaseAgent):
         Returns:
             Task execution result
         """
-        prompt = f"""
-Execute the task below with maximum quality.
+        # Retrieve relevant past memories
+        relevant_memories = self.ltm.recall_relevant(task)
+        memory_section = ""
+        
+        if relevant_memories:
+            memory_section = "Relevant past experience (for context only, don't just repeat it):\n"
+            memory_section += "\n".join(relevant_memories) + "\n\n"
+        
+        prompt = f"""{memory_section}Execute the task below with maximum quality.
 Be precise and actionable.
 
 Task:
@@ -35,7 +42,15 @@ Task:
             Task execution result
         """
         max_rounds = 3
-        messages = [{"role": "user", "content": f"""Execute the task below with maximum quality.
+        # Retrieve relevant past memories
+        relevant_memories = self.ltm.recall_relevant(task)
+        memory_section = ""
+        
+        if relevant_memories:
+            memory_section = "Relevant past experience (for context only, don't just repeat it):\n"
+            memory_section += "\n".join(relevant_memories) + "\n\n"
+            
+        messages = [{"role": "user", "content": f"""{memory_section}Execute the task below with maximum quality.
 Be precise and actionable. Use tools if necessary.
 
 Task:

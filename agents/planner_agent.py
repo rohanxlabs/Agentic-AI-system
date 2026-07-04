@@ -15,8 +15,15 @@ class PlannerAgent(BaseAgent):
         Returns:
             Numbered steps as a string
         """
-        prompt = f"""
-You are a strategic planning agent.
+        # Retrieve relevant past memories
+        relevant_memories = self.ltm.recall_relevant(goal)
+        memory_section = ""
+        
+        if relevant_memories:
+            memory_section = "Relevant past experience (for context only, don't just repeat it):\n"
+            memory_section += "\n".join(relevant_memories) + "\n\n"
+        
+        prompt = f"""{memory_section}You are a strategic planning agent.
 Break this goal into clear, executable steps.
 Be concise and actionable.
 

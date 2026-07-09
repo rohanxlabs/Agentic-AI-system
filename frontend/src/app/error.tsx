@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 export default function Error({
   error,
   unstable_retry,

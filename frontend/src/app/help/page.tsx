@@ -97,7 +97,7 @@ export default function Help() {
                   POST /run
                 </p>
                 <pre className="bg-muted/50 p-3 rounded overflow-auto text-xs">
-{`{ "goal": "Your goal here", "enableTools": true }`}
+{`{ "goal": "Your goal here", "enable_tools": true }`}
                 </pre>
               </div>
               <div className="border rounded-lg border-border bg-card p-4">

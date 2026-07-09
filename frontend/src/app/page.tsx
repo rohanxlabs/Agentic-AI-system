@@ -1,9 +1,19 @@
+"use client";
+
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Brain, TrendingUp } from "lucide-react";
+import { useDashboardData } from "@/features/dashboard/hooks/useDashboardData";
 
 export default function Dashboard() {
+  const { metrics, sessions, memoryStats, isLoading, error } = useDashboardData();
+
+  const sessionCount = sessions.length;
+  const taskCount = metrics?.total_requests ?? 0;
+  const memoryUsage = memoryStats?.short_term.usage_percent ?? 0;
+  const apiStatus = error ? "Down" : "OK";
+
   return (
     <div className="p-6 space-y-8">
       <div className="flex items-start justify-between">
@@ -23,25 +33,31 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <p className="text-sm text-muted-foreground">Sessions</p>
-            <p className="text-2xl font-semibold">--</p>
+            <p className="text-2xl font-semibold">
+              {isLoading ? "--" : sessionCount}
+            </p>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
             <p className="text-sm text-muted-foreground">Tasks</p>
-            <p className="text-2xl font-semibold">--</p>
+            <p className="text-2xl font-semibold">
+              {isLoading ? "--" : taskCount}
+            </p>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
             <p className="text-sm text-muted-foreground">Memory</p>
-            <p className="text-2xl font-semibold">--%</p>
+            <p className="text-2xl font-semibold">
+              {isLoading ? "--" : `${memoryUsage}%`}
+            </p>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
             <p className="text-sm text-muted-foreground">API</p>
-            <p className="text-2xl font-semibold">OK</p>
+            <p className="text-2xl font-semibold">{apiStatus}</p>
           </CardHeader>
         </Card>
       </div>

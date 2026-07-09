@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
+import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToasts } from "@/hooks/use-toast-notifier";
 import { runSystemStream, StreamEvent } from "@/services/api";
 import { Loader2, Brain, Code, TrendingUp, Users } from "lucide-react";
+
+export const dynamic = "force-dynamic";
 
 const formSchema = z.object({
   goal: z.string().min(1, "Goal is required"),
@@ -28,11 +31,12 @@ type Step = {
   step: number;
 };
 
-function isStepEvent(event: StreamEvent): event is { type: "step_result"; agent: string; content: string; step: number } {
-  return event.type === "step_result";
-}
-
 export default function Workspace() {
+  const searchParams = useSearchParams();
+  const initialSessionId =
+    searchParams.get("session_id") ||
+    (typeof window !== "undefined" ? localStorage.getItem("agentic_session_id") : null);
+
   const { register, handleSubmit, watch } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -44,6 +48,7 @@ export default function Workspace() {
   const [isRunning, setIsRunning] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
   const [isAborted, setIsAborted] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { success, error: toastError } = useToasts();
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -75,7 +80,7 @@ export default function Workspace() {
 
     try {
       const stream = runSystemStream(
-        { goal: data.goal, enable_tools: data.enableTools },
+        { goal: data.goal, enable_tools: data.enableTools, session_id: sessionId || undefined },
         { signal: abortControllerRef.current.signal }
       );
 
@@ -84,16 +89,62 @@ export default function Workspace() {
         if (isAborted) break;
 
         stepCount++;
-        if (isStepEvent(event)) {
-          setSteps((prev) => [
-            ...prev,
-            {
-              id: Date.now() + stepCount,
-              agent: event.agent || "Executor",
-              content: event.content,
-              step: stepCount,
-            },
-          ]);
+        switch (event.type) {
+          case "plan":
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: "Planner",
+                content: event.content,
+                step: stepCount,
+              },
+            ]);
+            break;
+          case "step_start":
+            break;
+          case "step_result":
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: event.agent || "Executor",
+                content: event.content,
+                step: stepCount,
+              },
+            ]);
+            break;
+          case "critique":
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: "Critic",
+                content: event.content,
+                step: stepCount,
+              },
+            ]);
+            break;
+          case "complete":
+            if (event.session_id) {
+              setSessionId(event.session_id);
+              if (typeof window !== "undefined") {
+                localStorage.setItem("agentic_session_id", event.session_id);
+              }
+            }
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: "Final",
+                content: event.result,
+                step: stepCount,
+              },
+            ]);
+            break;
+          case "error":
+            toastError("Execution failed", event.message);
+            break;
         }
       }
 

@@ -1,24 +1,31 @@
 "use client";
 
 import { useSession } from "@/features/sessions/hooks/useSession";
+import { useSessionList } from "@/features/sessions/hooks/useSessionList";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Server, Brain, Code, TrendingUp, Users, Clock, X } from "lucide-react";
-import { useState } from "react";
+import { useState, use } from "react";
 
-export default function SessionDetail({ params }: { params: { id: string } }) {
-  const { data: session, isLoading, error } = useSession(params.id);
+export default function SessionDetail({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const { data: session, isLoading, error } = useSession(id);
+  const { deleteSession } = useSessionList();
   const router = useRouter();
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleDeleteSession = () => {
+  const handleDeleteSession = async () => {
     if (window.confirm("Are you sure you want to delete this session?")) {
-      setIsDeleting(true);
-      setTimeout(() => {
+      try {
+        setIsDeleting(true);
+        await deleteSession(id);
         router.push("/sessions");
-      }, 500);
+      } catch (err) {
+        setIsDeleting(false);
+        window.alert((err as Error).message);
+      }
     }
   };
 
@@ -67,7 +74,7 @@ export default function SessionDetail({ params }: { params: { id: string } }) {
           <Button
             variant="outline"
             onClick={() => {
-              router.push("/workspace");
+              router.push(`/workspace?session_id=${id}`);
             }}
           >
             Resume Session

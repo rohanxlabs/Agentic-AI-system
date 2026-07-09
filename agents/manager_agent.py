@@ -99,11 +99,11 @@ Provide a complete, high-quality solution with:
 
 Be thorough but concise."""
         
-        yield {"type": "step_start", "step": "Executing simple mode task"}
+        yield {"type": "step_start", "step": "Executing simple mode task", "agent": "Executor"}
         result = self.executor.think(prompt)
         self.ltm.save(f"Simple execution: {result}")
-        yield {"type": "step_result", "content": result}
-        yield {"type": "final", "results": [result]}
+        yield {"type": "step_result", "content": result, "agent": "Executor"}
+        yield {"type": "complete", "result": result}
 
     def _run_full_mode(self, goal: str) -> List[str]:
         """Run in full agentic mode with multiple iterations.
@@ -186,13 +186,13 @@ Critique:
             iteration_critiques: List[str] = []
 
             for step in steps:
-                yield {"type": "step_start", "step": step}
-                
+                yield {"type": "step_start", "step": step, "agent": "Executor"}
+
                 if self.enable_tools:
                     result = self.executor.execute_task_with_tools(step)
                 else:
                     result = self.executor.execute_task(step)
-                yield {"type": "step_result", "content": result}
+                yield {"type": "step_result", "content": result, "agent": "Executor"}
                 
                 yield {"type": "critique", "content": "Evaluating result..."}
                 critique = self.critic.critique(result)
@@ -226,7 +226,7 @@ Critique:
                 if next_steps:
                     steps = next_steps
         
-        yield {"type": "final", "results": final_results}
+        yield {"type": "complete", "result": "\n\n".join(final_results)}
 
     def _parse_steps(self, plan: str) -> List[str]:
         """Extract numbered list items from a plan string.

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useSessionList } from "@/features/sessions/hooks/useSessionList";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -12,8 +13,18 @@ import { useToasts } from "@/hooks/use-toast-notifier";
 export default function Sessions() {
   const { sessions, isLoading, error, createSession, deleteSession } = useSessionList();
   const { success, error: toastError } = useToasts();
+  const router = useRouter();
 
   const [newGoal, setNewGoal] = useState("");
+
+  const handleNewSession = async () => {
+    try {
+      const session = await createSession(newGoal.trim() || undefined);
+      router.push(`/sessions/${session.id}`);
+    } catch (err) {
+      toastError("Failed to create session", (err as Error).message);
+    }
+  };
 
   const handleCreateSession = async () => {
     if (!newGoal.trim()) return;
@@ -45,7 +56,7 @@ export default function Sessions() {
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">Session Management</h1>
         <div className="flex space-x-4">
-          <Button variant="outline" onClick={() => window.location.href = "/sessions/new"}>
+          <Button variant="outline" onClick={handleNewSession}>
             New Session
           </Button>
           <Button

@@ -20,7 +20,7 @@ class SessionStore:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._shared_ltm = LongTermMemory()
     
-    def get_or_create(self, session_id: Optional[str] = None, ltm_path: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    def get_or_create(self, session_id: Optional[str] = None, ltm_path: Optional[str] = None, goal: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
         """Get an existing session or create a new one if it doesn't exist.
         
         Args:
@@ -51,7 +51,7 @@ class SessionStore:
             "ltm": ltm,
             "created_at": now,
             "last_used": now,
-            "goal": None,
+            "goal": goal,
             "status": "idle",
         }
         

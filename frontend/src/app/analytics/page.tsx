@@ -73,7 +73,7 @@ export default function Analytics() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Avg Response Time</span>
                   <span className="text-sm font-medium text-foreground">
-                    {(metrics?.avg_response_time || 0).toFixed(1)}ms
+                    {(metrics?.avg_response_time || 0).toFixed(2)}s
                   </span>
                 </div>
                 <div className="flex items-center justify-between">

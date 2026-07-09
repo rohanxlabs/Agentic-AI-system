@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -61,6 +62,22 @@ application = app
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Allow the frontend (Next.js dev server / production host) to call this API.
+# Origins are configurable via CORS_ORIGINS (comma-separated); defaults cover
+# the common local dev setup.
+_CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # API Key verification dependency
 async def verify_api_key(request: Request):
     """Verify the X-API-Key header if auth is enabled."""
@@ -80,6 +97,14 @@ class RunRequest(BaseModel):
 class RunResponse(BaseModel):
     results: List[str]
     session_id: str
+
+
+class SessionData(BaseModel):
+    id: str
+    created_at: str
+    last_used: str
+    status: str = "idle"
+    goal: Optional[str] = None
 
 
 @app.post("/run", response_model=RunResponse)
@@ -140,11 +165,15 @@ async def run_system_stream(request: Request, run_request: RunRequest, _: Any = 
         async def event_generator():
             try:
                 for event in manager.run_streaming(run_request.goal):
+                    # Surface the session id on the terminal event so the
+                    # frontend can persist and reuse the session.
+                    if event.get("type") == "complete":
+                        event = {**event, "session_id": session_id}
                     yield f"data: {json.dumps(event)}\n\n"
                     await asyncio.sleep(0)
             except Exception as e:
                 logger.exception("Error in streaming event generator")
-                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
         logger.info(f"Starting streaming system with goal: {run_request.goal}")
         return StreamingResponse(
@@ -171,37 +200,39 @@ def list_sessions(request: Request, _: Any = Depends(verify_api_key)):
     return {"sessions": sessions}
 
 
-@app.post("/sessions")
+class CreateSessionRequest(BaseModel):
+    goal: Optional[str] = None
+
+
+@app.post("/sessions", response_model=SessionData)
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def create_session_endpoint(request: Request, _: Any = Depends(verify_api_key)):
+def create_session_endpoint(request: Request, body: CreateSessionRequest, _: Any = Depends(verify_api_key)):
     """Create a new session with optional initial goal."""
-    session_id, session = session_store.get_or_create()
-    session_data = {
-        "id": session_id,
-        "created_at": datetime.fromtimestamp(session["created_at"]).isoformat(),
-        "last_used": datetime.fromtimestamp(session["last_used"]).isoformat(),
-        "status": session.get("status", "idle"),
-        "goal": None,
-    }
-    return JSONResponse(status_code=201, content=session_data)
+    session_id, session = session_store.get_or_create(goal=body.goal)
+    return SessionData(
+        id=session_id,
+        created_at=datetime.fromtimestamp(session["created_at"]).isoformat(),
+        last_used=datetime.fromtimestamp(session["last_used"]).isoformat(),
+        status=session.get("status", "idle"),
+        goal=session.get("goal"),
+    )
 
 
-@app.get("/sessions/{session_id}")
+@app.get("/sessions/{session_id}", response_model=SessionData)
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
 def get_session_endpoint(request: Request, session_id: str, _: Any = Depends(verify_api_key)):
     """Get session details."""
     session = session_store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    session_data = {
-        "id": session_id,
-        "created_at": datetime.fromtimestamp(session["created_at"]).isoformat(),
-        "last_used": datetime.fromtimestamp(session["last_used"]).isoformat(),
-        "status": session.get("status", "idle"),
-        "goal": session.get("goal"),
-    }
-    return session_data
+
+    return SessionData(
+        id=session_id,
+        created_at=datetime.fromtimestamp(session["created_at"]).isoformat(),
+        last_used=datetime.fromtimestamp(session["last_used"]).isoformat(),
+        status=session.get("status", "idle"),
+        goal=session.get("goal"),
+    )
 
 
 @app.delete("/sessions/{session_id}")

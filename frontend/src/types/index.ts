@@ -20,7 +20,7 @@ export type StreamEvent =
   | { type: "step_start"; step: string }
   | { type: "step_result"; content: string; agent: string }
   | { type: "critique"; content: string }
-  | { type: "complete"; result: string }
+  | { type: "complete"; result: string; session_id?: string }
   | { type: "error"; message: string };
 
 export type NavItem = {

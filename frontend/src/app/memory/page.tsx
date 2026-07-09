@@ -104,7 +104,7 @@ export default function Memory() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Growth Rate</span>
                       <span className="text-sm font-medium text-foreground">
-                        {memoryStats?.long_term.growth_rate || 0}%/day
+                        {memoryStats?.long_term.growth_rate || 0}/day
                       </span>
                     </div>
                   </div>

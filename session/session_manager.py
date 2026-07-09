@@ -2,7 +2,7 @@
 import uuid
 import time
 import logging
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any, Optional, List
 from datetime import datetime
 
 from memory.short_term import ShortTermMemory
@@ -18,7 +18,7 @@ class SessionStore:
     def __init__(self):
         """Initialize the session store."""
         self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._shared_ltm = LongTermMemory()  # Shared LTM by default
+        self._shared_ltm = LongTermMemory()
     
     def get_or_create(self, session_id: Optional[str] = None, ltm_path: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
         """Get an existing session or create a new one if it doesn't exist.
@@ -30,24 +30,19 @@ class SessionStore:
         Returns:
             Tuple of (session_id, session_data) containing stm, ltm, created_at, last_used
         """
-        # Generate new session ID if not provided
         if session_id is None:
             session_id = str(uuid.uuid4())
         
-        # Return existing session if it exists
         if session_id in self._sessions:
             session = self._sessions[session_id]
             session["last_used"] = time.time()
             logger.info(f"Reusing existing session: {session_id}")
             return session_id, session
         
-        # Create new session
         now = time.time()
         if ltm_path:
-            # Per-session LTM if path is provided
             ltm = LongTermMemory(storage_file=ltm_path)
         else:
-            # Use shared LTM by default
             ltm = self._shared_ltm
             
         stm = ShortTermMemory()
@@ -55,12 +50,40 @@ class SessionStore:
             "stm": stm,
             "ltm": ltm,
             "created_at": now,
-            "last_used": now
+            "last_used": now,
+            "goal": None,
+            "status": "idle",
         }
         
         self._sessions[session_id] = session
         logger.info(f"Created new session: {session_id}")
         return session_id, session
+    
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get a session by ID."""
+        return self._sessions.get(session_id)
+    
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        """List all sessions with metadata."""
+        sessions = []
+        for sid, data in self._sessions.items():
+            sessions.append({
+                "id": sid,
+                "created_at": datetime.fromtimestamp(data["created_at"]).isoformat(),
+                "last_used": datetime.fromtimestamp(data["last_used"]).isoformat(),
+                "goal": data.get("goal"),
+                "status": data.get("status", "idle"),
+            })
+        sessions.sort(key=lambda s: s["last_used"], reverse=True)
+        return sessions
+    
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session by ID."""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            logger.info(f"Deleted session: {session_id}")
+            return True
+        return False
     
     def cleanup_stale(self, max_age_seconds: int = 3600) -> int:
         """Remove sessions that haven't been used in max_age_seconds.
@@ -85,11 +108,7 @@ class SessionStore:
         return len(stale_session_ids)
     
     def get_session_count(self) -> int:
-        """Get the current number of active sessions.
-        
-        Returns:
-            Number of active sessions
-        """
+        """Get the current number of active sessions."""
         return len(self._sessions)
 
 

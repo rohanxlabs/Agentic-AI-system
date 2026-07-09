@@ -77,11 +77,11 @@ class GroqLLM:
         logger.error(f"Rate limit exceeded after {max_retries} attempts")
         raise last_exception
 
-    def call_with_tools(self, prompt: str, tools: list, temperature: float = 0.3, max_tokens: int = 2048) -> dict:
+    def call_with_tools(self, messages: list, tools: list, temperature: float = 0.3, max_tokens: int = 2048) -> dict:
         """Call the Groq API with tool support.
         
         Args:
-            prompt: Input prompt for the model
+            messages: Full conversation messages list in OpenAI format
             tools: List of tool schemas in OpenAI format
             temperature: Sampling temperature (0.0-2.0)
             max_tokens: Maximum response length
@@ -89,7 +89,6 @@ class GroqLLM:
         Returns:
             Dictionary with content and tool_calls from the API response
         """
-        messages = [{"role": "user", "content": prompt}]
         try:
             response = self.client.chat.completions.create(
                 model=MODEL_NAME,

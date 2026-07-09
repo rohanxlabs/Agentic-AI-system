@@ -1,19 +1,16 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 
 export default function Error({
   error,
-  reset,
+  unstable_retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  unstable_retry: () => void;
 }) {
-  const router = useRouter();
-
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -26,12 +23,7 @@ export default function Error({
         {error.message || "An unexpected error occurred. Please try again."}
       </p>
       <div className="flex gap-2">
-        <Button onClick={reset} variant="default">
-          Try again
-        </Button>
-        <Button onClick={() => router.refresh()} variant="secondary">
-          Retry
-        </Button>
+        <Button onClick={() => unstable_retry()}>Try again</Button>
       </div>
     </div>
   );

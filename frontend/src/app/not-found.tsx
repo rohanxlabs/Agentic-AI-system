@@ -4,15 +4,14 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Home } from "lucide-react";
-import { AppShell } from "@/components/layout/app-shell";
 
 export default function NotFound() {
   return (
-    <AppShell>
+    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 text-center">
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="flex min-h-[60vh] flex-col items-center justify-center gap-6 text-center"
+        className="flex flex-col items-center gap-6"
       >
         <h1 className="text-8xl font-bold tracking-tighter text-primary">404</h1>
         <h2 className="text-2xl font-semibold">Page not found</h2>
@@ -26,6 +25,6 @@ export default function NotFound() {
           </Button>
         </Link>
       </motion.div>
-    </AppShell>
+    </div>
   );
 }

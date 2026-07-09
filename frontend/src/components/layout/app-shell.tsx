@@ -5,13 +5,17 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { useAppStore } from "@/store/app-store";
-import { Home, FlaskConical, BarChart3, Bot } from "lucide-react";
+import { Home, FlaskConical, BarChart3, Bot, Settings, User, HelpCircle, Brain } from "lucide-react";
 
 const sidebarNavItems = [
   { label: "Dashboard", href: "/", icon: Home },
-  { label: "Workspace", href: "/workspace", icon: FlaskConical, disabled: true },
-  { label: "Analytics", href: "/analytics", icon: BarChart3, disabled: true },
-  { label: "Agents", href: "/agents", icon: Bot, disabled: true },
+  { label: "Workspace", href: "/workspace", icon: FlaskConical },
+  { label: "Memory", href: "/memory", icon: Brain },
+  { label: "Analytics", href: "/analytics", icon: BarChart3 },
+  { label: "Agents", href: "/agents", icon: Bot },
+  { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Profile", href: "/profile", icon: User },
+  { label: "Help", href: "/help", icon: HelpCircle },
 ];
 
 interface ShellProps {
@@ -36,12 +40,11 @@ export function AppShell({ children }: ShellProps) {
                 <a
                   href={item.href}
                   aria-current={false}
-                  aria-disabled={item.disabled}
+                  aria-disabled={false}
                   className={`
                     flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors
                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
                     text-muted-foreground hover:bg-muted/50 hover:text-foreground
-                    ${item.disabled ? "cursor-not-allowed opacity-50" : ""}
                     ${!sidebarOpen ? "justify-center px-2" : ""}
                   `}
                 >

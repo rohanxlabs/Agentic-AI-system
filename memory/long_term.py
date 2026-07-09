@@ -81,7 +81,7 @@ class LongTermMemory:
         Returns:
             List of relevant memory contents, ordered by similarity descending
         """
-        k = k or MEMORY_TOP_K
+        k = MEMORY_TOP_K if k is None else k
         
         # Handle empty memory case
         if not self.store:

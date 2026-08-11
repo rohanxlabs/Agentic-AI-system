@@ -17,7 +17,8 @@ export type RunResponse = {
 
 export type StreamEvent =
   | { type: "plan"; content: string }
-  | { type: "step_start"; step: string }
+  | { type: "step_start"; step: string; agent?: string; iteration?: number; step_number?: number; total_steps?: number }
+  | { type: "tool_call"; tool: string; input: string; output: string; status: string }
   | { type: "step_result"; content: string; agent: string }
   | { type: "critique"; content: string }
   | { type: "complete"; result: string; session_id?: string }

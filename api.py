@@ -1,31 +1,37 @@
 """FastAPI application for the Agentic AI System."""
 import asyncio
-import logging
 import json
-import time
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Any, Dict
-from fastapi import FastAPI, HTTPException, Request, Depends
+from typing import Any, Dict, List, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from llm.groq_llm import GroqLLM
-from agents.planner_agent import PlannerAgent
-from agents.executor_agent import ExecutorAgent
 from agents.critic_agent import CriticAgent
+from agents.executor_agent import ExecutorAgent
 from agents.manager_agent import ManagerAgent
-from config.config import LOG_LEVEL, LOG_FILE, API_AUTH_KEY, RATE_LIMIT_PER_MINUTE
+from agents.planner_agent import PlannerAgent
+from config.config import (
+    API_AUTH_KEY,
+    LOG_FILE,
+    LOG_LEVEL,
+    RATE_LIMIT_PER_MINUTE,
+)
+from llm.groq_llm import GroqLLM, LLMError
 from session.session_manager import session_store
 from tools.tool_registry import TOOL_SCHEMAS
 
-# Setup logging
+# ── Logging ───────────────────────────────────────────────────────────────────
 log_path = Path(LOG_FILE)
 log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -34,20 +40,20 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(log_path),
-        logging.StreamHandler()
-    ]
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
-# Initialize rate limiter
+# ── Rate limiter ──────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cleanup_task = asyncio.create_task(cleanup_stale_sessions())
-    app.state.cleanup_task = cleanup_task
-    logger.info("Application startup complete - session cleanup task started")
+    app.state.start_time = time.time()
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    logger.info("Agentic AI System API started.")
     yield
     cleanup_task.cancel()
     try:
@@ -56,18 +62,25 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Agentic AI System API", version="1.0.0", lifespan=lifespan)
-# Provide a standard `application` ASGI variable for WSGI/hosting compatibility
-application = app
+app = FastAPI(
+    title="Agentic AI System API",
+    version="1.0.0",
+    description=(
+        "A goal-driven agentic AI system: Plan → Execute (with tools) → "
+        "Critique → Refine, with session-isolated memory."
+    ),
+    lifespan=lifespan,
+)
+application = app  # ASGI alias for hosting compatibility
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Allow the frontend (Next.js dev server / production host) to call this API.
-# Origins are configurable via CORS_ORIGINS (comma-separated); defaults cover
-# the common local dev setup.
 _CORS_ORIGINS = [
     o.strip()
-    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
     if o.strip()
 ]
 app.add_middleware(
@@ -78,15 +91,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API Key verification dependency
-async def verify_api_key(request: Request):
-    """Verify the X-API-Key header if auth is enabled."""
+
+# ── Auth dependency ───────────────────────────────────────────────────────────
+
+async def verify_api_key(request: Request) -> None:
+    """Verify X-API-Key header when API_AUTH_KEY is configured."""
     if not API_AUTH_KEY:
         return
-    api_key = request.headers.get("X-API-Key")
-    if not api_key or api_key != API_AUTH_KEY:
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key != API_AUTH_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
+
+# ── Request / Response models ─────────────────────────────────────────────────
 
 class RunRequest(BaseModel):
     goal: str
@@ -107,107 +124,140 @@ class SessionData(BaseModel):
     goal: Optional[str] = None
 
 
-@app.post("/run", response_model=RunResponse)
-@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def run_system(request: Request, run_request: RunRequest, _: Any = Depends(verify_api_key)):
-    """Run the Agentic AI System with the given goal."""
-    try:
-        if not run_request.goal.strip():
-            raise HTTPException(status_code=400, detail="Goal cannot be empty")
-
-        session_id, session = session_store.get_or_create(run_request.session_id)
-        stm = session["stm"]
-        ltm = session["ltm"]
-
-        if run_request.session_id and session["last_used"] != session["created_at"]:
-            logger.info(f"Reusing session {session_id} with existing STM content: {stm.get()}")
-
-        llm = GroqLLM()
-        planner = PlannerAgent("Planner", llm, stm, ltm)
-        executor = ExecutorAgent("Executor", llm, stm, ltm)
-        critic = CriticAgent("Critic", llm, stm, ltm)
-
-        manager = ManagerAgent(planner, executor, critic, ltm, enable_tools=run_request.enable_tools)
-
-        logger.info(f"Starting system with goal: {run_request.goal}")
-        results = manager.run(run_request.goal)
-        logger.info("System completed successfully")
-
-        return RunResponse(results=results, session_id=session_id)
-
-    except Exception as e:
-        logger.exception("Unexpected error occurred")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/run/stream")
-@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-async def run_system_stream(request: Request, run_request: RunRequest, _: Any = Depends(verify_api_key)):
-    """Run the Agentic AI System with streaming progress updates via SSE."""
-    try:
-        if not run_request.goal.strip():
-            raise HTTPException(status_code=400, detail="Goal cannot be empty")
-
-        session_id, session = session_store.get_or_create(run_request.session_id)
-        stm = session["stm"]
-        ltm = session["ltm"]
-
-        if run_request.session_id and session["last_used"] != session["created_at"]:
-            logger.info(f"Reusing streaming session {session_id} with existing STM content: {stm.get()}")
-
-        llm = GroqLLM()
-        planner = PlannerAgent("Planner", llm, stm, ltm)
-        executor = ExecutorAgent("Executor", llm, stm, ltm)
-        critic = CriticAgent("Critic", llm, stm, ltm)
-
-        manager = ManagerAgent(planner, executor, critic, ltm, enable_tools=run_request.enable_tools)
-
-        async def event_generator():
-            try:
-                for event in manager.run_streaming(run_request.goal):
-                    # Surface the session id on the terminal event so the
-                    # frontend can persist and reuse the session.
-                    if event.get("type") == "complete":
-                        event = {**event, "session_id": session_id}
-                    yield f"data: {json.dumps(event)}\n\n"
-                    await asyncio.sleep(0)
-            except Exception as e:
-                logger.exception("Error in streaming event generator")
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
-        logger.info(f"Starting streaming system with goal: {run_request.goal}")
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream"
-        )
-
-    except Exception as e:
-        logger.exception("Unexpected error occurred in streaming endpoint")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {"message": "Agentic AI System API","status": "OK"}
-
-
-@app.get("/sessions")
-@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def list_sessions(request: Request, _: Any = Depends(verify_api_key)):
-    """List all active sessions."""
-    sessions = session_store.list_sessions()
-    return {"sessions": sessions}
-
-
 class CreateSessionRequest(BaseModel):
     goal: Optional[str] = None
 
 
-@app.post("/sessions", response_model=SessionData)
+# ── Agent factory ─────────────────────────────────────────────────────────────
+
+def _build_manager(stm: Any, ltm: Any, enable_tools: bool) -> ManagerAgent:
+    llm = GroqLLM()
+    planner = PlannerAgent("Planner", llm, stm, ltm)
+    executor = ExecutorAgent("Executor", llm, stm, ltm)
+    critic = CriticAgent("Critic", llm, stm, ltm)
+    return ManagerAgent(planner, executor, critic, ltm, enable_tools=enable_tools)
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/", tags=["Health"])
+async def root() -> Dict[str, str]:
+    return {"message": "Agentic AI System API", "status": "OK"}
+
+
+@app.post("/run", response_model=RunResponse, tags=["Agent"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def create_session_endpoint(request: Request, body: CreateSessionRequest, _: Any = Depends(verify_api_key)):
-    """Create a new session with optional initial goal."""
+def run_system(
+    request: Request,
+    run_request: RunRequest,
+    _: Any = Depends(verify_api_key),
+) -> RunResponse:
+    """Run the agent synchronously and return all results."""
+    goal = run_request.goal.strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="Goal cannot be empty")
+    if len(goal) > 2000:
+        raise HTTPException(status_code=400, detail="Goal exceeds 2000 character limit")
+
+    session_id, session = session_store.get_or_create(
+        run_request.session_id, goal=goal
+    )
+    session["status"] = "running"
+
+    try:
+        manager = _build_manager(
+            session["stm"], session["ltm"], run_request.enable_tools
+        )
+        logger.info("run  session=%s goal=%r", session_id, goal[:80])
+        results = manager.run(goal)
+        session["status"] = "completed"
+        logger.info("run  completed  session=%s", session_id)
+        return RunResponse(results=results, session_id=session_id)
+    except LLMError as exc:
+        session["status"] = "error"
+        logger.error("LLM error in /run: %s", exc)
+        raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
+    except Exception as exc:
+        session["status"] = "error"
+        logger.exception("Unexpected error in /run")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/run/stream", tags=["Agent"])
+@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
+async def run_system_stream(
+    request: Request,
+    run_request: RunRequest,
+    _: Any = Depends(verify_api_key),
+) -> StreamingResponse:
+    """Run the agent and stream structured SSE progress events.
+
+    Event types:
+
+    * ``plan``       – Planner produced or revised a plan.
+    * ``step_start`` – About to execute a step.
+    * ``tool_call``  – A tool was invoked (name / input / output / status).
+    * ``step_result``– Step execution finished.
+    * ``critique``   – Critic evaluated a step result.
+    * ``complete``   – Final answer ready (also carries ``session_id``).
+    * ``error``      – Something went wrong.
+    """
+    goal = run_request.goal.strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="Goal cannot be empty")
+    if len(goal) > 2000:
+        raise HTTPException(status_code=400, detail="Goal exceeds 2000 character limit")
+
+    session_id, session = session_store.get_or_create(
+        run_request.session_id, goal=goal
+    )
+
+    async def event_generator():
+        session["status"] = "running"
+        try:
+            manager = _build_manager(
+                session["stm"], session["ltm"], run_request.enable_tools
+            )
+            logger.info(
+                "stream  session=%s goal=%r", session_id, goal[:80]
+            )
+            for event in manager.run_streaming(goal):
+                if event.get("type") == "complete":
+                    event = {**event, "session_id": session_id}
+                    session["status"] = "completed"
+                yield f"data: {json.dumps(event)}\n\n"
+                await asyncio.sleep(0)  # yield to event loop
+        except LLMError as exc:
+            session["status"] = "error"
+            logger.error("LLM error in /run/stream: %s", exc)
+            yield f"data: {json.dumps({'type': 'error', 'message': f'LLM error: {exc}'})}\n\n"
+        except Exception as exc:
+            session["status"] = "error"
+            logger.exception("Unexpected error in /run/stream")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ── Sessions ──────────────────────────────────────────────────────────────────
+
+@app.get("/sessions", tags=["Sessions"])
+@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
+def list_sessions(
+    request: Request, _: Any = Depends(verify_api_key)
+) -> List[SessionData]:
+    """List all active sessions."""
+    return [SessionData(**s) for s in session_store.list_sessions()]
+
+
+@app.post("/sessions", response_model=SessionData, tags=["Sessions"])
+@limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
+def create_session_endpoint(
+    request: Request,
+    body: CreateSessionRequest,
+    _: Any = Depends(verify_api_key),
+) -> SessionData:
+    """Create a new isolated session."""
     session_id, session = session_store.get_or_create(goal=body.goal)
     return SessionData(
         id=session_id,
@@ -218,14 +268,16 @@ def create_session_endpoint(request: Request, body: CreateSessionRequest, _: Any
     )
 
 
-@app.get("/sessions/{session_id}", response_model=SessionData)
+@app.get("/sessions/{session_id}", response_model=SessionData, tags=["Sessions"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def get_session_endpoint(request: Request, session_id: str, _: Any = Depends(verify_api_key)):
-    """Get session details."""
+def get_session_endpoint(
+    request: Request,
+    session_id: str,
+    _: Any = Depends(verify_api_key),
+) -> SessionData:
     session = session_store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-
     return SessionData(
         id=session_id,
         created_at=datetime.fromtimestamp(session["created_at"]).isoformat(),
@@ -235,179 +287,170 @@ def get_session_endpoint(request: Request, session_id: str, _: Any = Depends(ver
     )
 
 
-@app.delete("/sessions/{session_id}")
+@app.delete("/sessions/{session_id}", status_code=204, tags=["Sessions"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def delete_session_endpoint(request: Request, session_id: str, _: Any = Depends(verify_api_key)):
-    """Delete a session."""
-    deleted = session_store.delete_session(session_id)
-    if not deleted:
+def delete_session_endpoint(
+    request: Request,
+    session_id: str,
+    _: Any = Depends(verify_api_key),
+) -> None:
+    if not session_store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    return JSONResponse(status_code=204, content=None)
 
 
-@app.get("/memory/stats")
+# ── Memory ────────────────────────────────────────────────────────────────────
+
+@app.get("/memory/stats", tags=["Memory"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def get_memory_stats(request: Request, _: Any = Depends(verify_api_key)):
-    """Get memory statistics across all sessions."""
+def get_memory_stats(
+    request: Request, _: Any = Depends(verify_api_key)
+) -> Dict[str, Any]:
+    """Aggregate memory statistics across all active sessions."""
     sessions = session_store.list_sessions()
-    
-    # Aggregate short-term memory stats from active sessions
+
     stm_count = 0
     stm_max_size = 0
+    ltm_count = 0
+    growth_rate = 0.0
+
     for s in sessions:
-        session = session_store.get_session(s["id"])
-        if session and "stm" in session:
-            stm = session["stm"]
+        data = session_store.get_session(s["id"])
+        if not data:
+            continue
+        stm = data.get("stm")
+        if stm:
             stm_count += len(stm.buffer)
             stm_max_size = max(stm_max_size, stm.buffer_size)
-    
-    # Long-term memory stats from shared LTM
-    shared_ltm = session_store._shared_ltm
-    ltm_count = len(shared_ltm.store)
-    
-    # Estimate growth rate (entries per day since oldest entry)
-    growth_rate = 0.0
-    if shared_ltm.store:
-        oldest = shared_ltm.store[0].get("timestamp")
-        if oldest:
-            try:
-                oldest_dt = datetime.fromisoformat(oldest)
-                days = max((datetime.now() - oldest_dt).total_seconds() / 86400, 1)
-                growth_rate = round(ltm_count / days, 2)
-            except Exception:
-                growth_rate = 0.0
-    
+        ltm = data.get("ltm")
+        if ltm:
+            ltm_count += len(ltm.store)
+            if ltm.store:
+                oldest = ltm.store[0].get("timestamp")
+                if oldest:
+                    try:
+                        from datetime import datetime as _dt
+                        days = max(
+                            (_dt.now() - _dt.fromisoformat(oldest)).total_seconds()
+                            / 86400,
+                            1,
+                        )
+                        growth_rate += round(len(ltm.store) / days, 2)
+                    except Exception:
+                        pass
+
+    effective_max = stm_max_size or 10
     return {
         "short_term": {
             "count": stm_count,
-            "max_size": stm_max_size or 10,
-            "usage_percent": round((stm_count / max(stm_max_size, 1)) * 100, 1) if stm_max_size else 0.0,
+            "max_size": effective_max,
+            "usage_percent": round(stm_count / effective_max * 100, 1),
         },
         "long_term": {
             "count": ltm_count,
-            "growth_rate": growth_rate,
+            "growth_rate": round(growth_rate, 2),
         },
     }
 
 
-@app.get("/agents/status")
+# ── Agents ────────────────────────────────────────────────────────────────────
+
+@app.get("/agents/status", tags=["Agents"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def get_agent_statuses(request: Request, _: Any = Depends(verify_api_key)):
-    """Get current status of all agents."""
-    # Since agents don't run continuously in this architecture,
-    # return their current inferred state
-    agents = [
-        {
-            "name": "Planner",
-            "status": "idle",
-            "current_task": None,
-            "last_activity": datetime.now().isoformat(),
-            "task_count": 0,
-            "avg_response_time": 0.0,
-        },
-        {
-            "name": "Executor",
-            "status": "idle",
-            "current_task": None,
-            "last_activity": datetime.now().isoformat(),
-            "task_count": 0,
-            "avg_response_time": 0.0,
-        },
-        {
-            "name": "Critic",
-            "status": "idle",
-            "current_task": None,
-            "last_activity": datetime.now().isoformat(),
-            "task_count": 0,
-            "avg_response_time": 0.0,
-        },
-        {
-            "name": "Manager",
-            "status": "idle",
-            "current_task": None,
-            "last_activity": datetime.now().isoformat(),
-            "task_count": session_store.get_session_count(),
-            "avg_response_time": 0.0,
-        },
+def get_agent_statuses(
+    request: Request, _: Any = Depends(verify_api_key)
+) -> List[Dict[str, Any]]:
+    """Return current inferred status of each agent role."""
+    running_sessions = [
+        s for s in session_store.list_sessions() if s.get("status") == "running"
     ]
+    agent_status = "busy" if running_sessions else "idle"
+    current_task = running_sessions[0].get("goal") if running_sessions else None
+
+    agents = []
+    for name in ("Planner", "Executor", "Critic", "Manager"):
+        agents.append(
+            {
+                "name": name,
+                "status": agent_status,
+                "current_task": current_task,
+                "last_activity": datetime.now().isoformat(),
+                "task_count": getattr(app.state, "successful_requests", 0),
+                "avg_response_time": getattr(app.state, "avg_response_time", 0.0),
+            }
+        )
     return agents
 
 
-@app.get("/tools")
+# ── Tools ─────────────────────────────────────────────────────────────────────
+
+@app.get("/tools", tags=["Tools"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def get_tools(request: Request, _: Any = Depends(verify_api_key)):
-    """Get available tools and their schemas."""
-    tools = []
-    for schema in TOOL_SCHEMAS:
-        tools.append({
+def get_tools(
+    request: Request, _: Any = Depends(verify_api_key)
+) -> List[Dict[str, Any]]:
+    """Return the available tool schemas."""
+    return [
+        {
             "name": schema["function"]["name"],
             "description": schema["function"]["description"],
             "parameters": schema["function"]["parameters"],
             "is_enabled": True,
             "usage_count": 0,
-        })
-    return tools
+        }
+        for schema in TOOL_SCHEMAS
+    ]
 
 
-@app.get("/metrics")
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+@app.get("/metrics", tags=["Metrics"])
 @limiter.limit(f"{RATE_LIMIT_PER_MINUTE}/minute")
-def get_metrics(request: Request, _: Any = Depends(verify_api_key)):
-    """Get system metrics."""
-    process_start = getattr(app.state, "start_time", time.time())
-    if not hasattr(app.state, "start_time"):
-        app.state.start_time = time.time()
-        process_start = app.state.start_time
-    
-    uptime_seconds = time.time() - process_start
-    hours = int(uptime_seconds // 3600)
-    minutes = int((uptime_seconds % 3600) // 60)
-    seconds = int(uptime_seconds % 60)
-    uptime = f"{hours}h {minutes}m {seconds}s"
-    
-    # Approximate memory usage of process
+def get_metrics(
+    request: Request, _: Any = Depends(verify_api_key)
+) -> Dict[str, Any]:
+    """Return basic system metrics."""
+    uptime_s = time.time() - getattr(app.state, "start_time", time.time())
+    h = int(uptime_s // 3600)
+    m = int((uptime_s % 3600) // 60)
+    s = int(uptime_s % 60)
+
+    memory_used = 0
+    memory_total = 0
     try:
-        import psutil
-        process = psutil.Process(os.getpid())
-        mem_info = process.memory_info()
-        memory_used = mem_info.rss
+        import psutil, os as _os
+        proc = psutil.Process(_os.getpid())
+        memory_used = proc.memory_info().rss
         memory_total = psutil.virtual_memory().total
-        memory_unit = "bytes"
     except Exception:
-        memory_used = 0
-        memory_total = 0
-        memory_unit = "bytes"
-    
+        pass
+
     return {
-        "uptime": uptime,
+        "uptime": f"{h}h {m}m {s}s",
         "total_requests": getattr(app.state, "total_requests", 0),
         "successful_requests": getattr(app.state, "successful_requests", 0),
         "failed_requests": getattr(app.state, "failed_requests", 0),
-        "avg_response_time": getattr(app.state, "avg_response_time", 0.0),
+        "avg_response_time": round(
+            getattr(app.state, "avg_response_time", 0.0), 3
+        ),
         "active_sessions": session_store.get_session_count(),
         "memory_usage": {
             "used": memory_used,
             "total": memory_total,
-            "unit": memory_unit,
+            "unit": "bytes",
         },
     }
 
 
-# Background task for cleaning up stale sessions
-async def cleanup_stale_sessions():
-    """Periodically clean up stale sessions every 10 minutes."""
-    while True:
-        await asyncio.sleep(600)
-        cleaned = session_store.cleanup_stale()
-        logger.info(f"Session cleanup completed: removed {cleaned} stale sessions")
-
+# ── Middleware ────────────────────────────────────────────────────────────────
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
-    """Middleware to track request metrics."""
     start = time.time()
     try:
         response = await call_next(request)
-        app.state.successful_requests = getattr(app.state, "successful_requests", 0) + 1
+        app.state.successful_requests = (
+            getattr(app.state, "successful_requests", 0) + 1
+        )
         return response
     except Exception:
         app.state.failed_requests = getattr(app.state, "failed_requests", 0) + 1
@@ -415,6 +458,19 @@ async def metrics_middleware(request: Request, call_next):
     finally:
         app.state.total_requests = getattr(app.state, "total_requests", 0) + 1
         elapsed = time.time() - start
-        avg = getattr(app.state, "avg_response_time", 0.0)
         count = app.state.total_requests
-        app.state.avg_response_time = (avg * (count - 1) + elapsed) / count if count > 0 else elapsed
+        prev_avg = getattr(app.state, "avg_response_time", 0.0)
+        app.state.avg_response_time = (
+            (prev_avg * (count - 1) + elapsed) / count if count else elapsed
+        )
+
+
+# ── Background helpers ────────────────────────────────────────────────────────
+
+async def _cleanup_loop() -> None:
+    """Periodically evict sessions idle for more than 1 hour."""
+    while True:
+        await asyncio.sleep(600)
+        removed = session_store.cleanup_stale(max_age_seconds=3600)
+        if removed:
+            logger.info("Session cleanup removed %d stale session(s).", removed)

@@ -1,0 +1,171 @@
+═══════════════════════════════════════════════════════════════
+  AGENTIC AI SYSTEM — SIMPLIFIED SETUP
+═══════════════════════════════════════════════════════════════
+
+✅ WHAT CHANGED:
+
+1. ONE-COMMAND LAUNCH
+   - Created: start.py
+   - Runs backend + frontend together
+   - Auto-checks dependencies
+   - Auto-installs npm packages if missing
+
+2. SIMPLIFIED FRONTEND
+   - Removed complex navigation
+   - Single working page: /workspace
+   - Auto-redirects from home → workspace
+   - Clean header, no sidebars
+
+3. CLEAR DOCUMENTATION
+   - SIMPLE_START.md — Quick start guide
+   - Updated README.md — Points to simple start
+   - All placeholder pages removed from nav
+
+═══════════════════════════════════════════════════════════════
+  HOW TO USE NOW
+═══════════════════════════════════════════════════════════════
+
+STEP 1: Install Python packages (first time only)
+────────────────────────────────────────────────────────────────
+  pip install -r requirements.txt
+
+
+STEP 2: Configure API key (first time only)
+────────────────────────────────────────────────────────────────
+  cp .env.example .env
+  
+  Then edit .env and add:
+    GROQ_API_KEY=gsk_your_actual_key_here
+  
+  Get free key: https://console.groq.com
+
+
+STEP 3: Launch everything
+────────────────────────────────────────────────────────────────
+  python start.py
+
+  System will:
+    • Check your .env file
+    • Verify dependencies
+    • Install frontend packages (if needed)
+    • Start backend API (port 8000)
+    • Start frontend UI (port 3000)
+    • Show you when ready
+
+  Open: http://localhost:3000
+
+  Press Ctrl+C to stop both servers
+
+
+═══════════════════════════════════════════════════════════════
+  WHAT YOU GET
+═══════════════════════════════════════════════════════════════
+
+BROWSER (http://localhost:3000):
+  • Clean workspace interface
+  • Goal input form
+  • "Enable tool usage" checkbox
+  • Real-time execution view showing:
+    - Planner steps
+    - Tool calls (highlighted in yellow)
+    - Results
+    - Critic evaluations
+
+TERMINAL:
+  • Color-coded output
+  • [API] backend logs (blue)
+  • [UI]  frontend logs (yellow)
+  • Status messages (green)
+
+
+═══════════════════════════════════════════════════════════════
+  TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════
+
+❌ "Module not found: sentence_transformers"
+  → pip install sentence-transformers==3.3.1
+
+❌ "GROQ_API_KEY not set"
+  → Edit .env and add your key
+
+❌ "npm not found"
+  → Install Node.js: https://nodejs.org
+
+❌ Frontend won't start
+  → cd frontend && npm install
+  → cd .. && python start.py
+
+❌ Rate limit errors (429)
+  → Try simpler goals (less LLM calls)
+  → Wait a minute and retry
+
+
+═══════════════════════════════════════════════════════════════
+  EXAMPLE GOALS
+═══════════════════════════════════════════════════════════════
+
+SIMPLE (won't hit rate limits):
+  • Calculate 15 * 7 using the calculator tool
+  • Calculate (100 + 50) / 2
+
+MEDIUM (may hit rate limits):
+  • Calculate the factorial of 5
+  • Find the square root of 144 and multiply by 3
+
+COMPLEX (will likely hit rate limits on free tier):
+  • Research Python 3.12 release date and calculate days since release
+  • Find Bitcoin price and calculate 10% of it
+
+
+═══════════════════════════════════════════════════════════════
+  FILES CREATED/MODIFIED
+═══════════════════════════════════════════════════════════════
+
+NEW FILES:
+  ✓ start.py                    — Unified launcher
+  ✓ SIMPLE_START.md             — Quick start guide
+  ✓ SIMPLIFIED_SETUP.txt        — This file
+  ✓ scripts/_test_ltm_fix.py    — LTM dependency test
+
+MODIFIED:
+  ✓ README.md                   — Added simple start section
+  ✓ frontend/src/app/page.tsx   — Auto-redirect to workspace
+  ✓ frontend/src/app/layout.tsx — Removed sidebar, added header
+
+
+═══════════════════════════════════════════════════════════════
+  ALTERNATIVE: CLI ONLY
+═══════════════════════════════════════════════════════════════
+
+Don't want the UI? Just run:
+
+  python main.py
+
+Enter goal when prompted. Results print to terminal.
+
+
+═══════════════════════════════════════════════════════════════
+  TESTING (NO API KEY NEEDED)
+═══════════════════════════════════════════════════════════════
+
+Run 122 tests without Groq:
+
+  pytest tests/ -v
+
+All tests mocked — no LLM calls, no network, no keys required.
+
+
+═══════════════════════════════════════════════════════════════
+  STATUS: READY ✅
+═══════════════════════════════════════════════════════════════
+
+Your system is now:
+  ✓ Simple to run (one command)
+  ✓ Backend + Frontend integrated
+  ✓ Clean UI (no placeholder pages)
+  ✓ Fully documented
+  ✓ Portfolio-ready
+
+Just run: python start.py
+
+═══════════════════════════════════════════════════════════════

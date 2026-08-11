@@ -29,6 +29,8 @@ type Step = {
   agent: string;
   content: string;
   step: number;
+  isToolCall?: boolean;
+  toolStatus?: string;
 };
 
 export default function Workspace() {
@@ -102,6 +104,28 @@ export default function Workspace() {
             ]);
             break;
           case "step_start":
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: "Manager",
+                content: `▶ ${event.step}`,
+                step: stepCount,
+              },
+            ]);
+            break;
+          case "tool_call":
+            setSteps((prev) => [
+              ...prev,
+              {
+                id: Date.now() + stepCount,
+                agent: `Tool: ${event.tool}`,
+                content: `Input: ${event.input}\nResult: ${event.output}`,
+                step: stepCount,
+                isToolCall: true,
+                toolStatus: event.status,
+              },
+            ]);
             break;
           case "step_result":
             setSteps((prev) => [
@@ -238,9 +262,12 @@ export default function Workspace() {
           <div className="p-4 space-y-4" ref={messagesRef}>
             {steps.map((step) => (
               <div key={step.id} className="flex w-full gap-4">
-                <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-md bg-primary/20 text-primary">
+                <div className={`flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-md ${step.isToolCall ? "bg-yellow-500/20 text-yellow-600" : "bg-primary/20 text-primary"}`}>
                   {step.agent === "Planner" && (
                     <Brain className="h-4 w-4" />
+                  )}
+                  {step.agent.startsWith("Tool:") && (
+                    <Code className="h-4 w-4" />
                   )}
                   {step.agent === "Executor" && (
                     <Code className="h-4 w-4" />
@@ -248,14 +275,21 @@ export default function Workspace() {
                   {step.agent === "Critic" && (
                     <TrendingUp className="h-4 w-4" />
                   )}
-                  {step.agent === "Manager" && (
+                  {(step.agent === "Manager" || step.agent === "Final") && (
                     <Users className="h-4 w-4" />
                   )}
                 </div>
-                <div className="flex-1 bg-card p-3 rounded-lg border border-border">
-                  <p className="font-medium text-foreground">{step.agent}</p>
-                  <p className="text-sm text-muted-foreground">Step {step.step}</p>
-                  <div className="mt-2 whitespace-pre-wrap break-words">
+                <div className={`flex-1 p-3 rounded-lg border ${step.isToolCall ? "bg-yellow-500/5 border-yellow-500/30" : "bg-card border-border"}`}>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-foreground">{step.agent}</p>
+                    {step.isToolCall && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${step.toolStatus === "ok" ? "bg-green-500/20 text-green-600" : "bg-red-500/20 text-red-600"}`}>
+                        {step.toolStatus}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-1">Step {step.step}</p>
+                  <div className="mt-2 whitespace-pre-wrap break-words text-sm">
                     {step.content}
                   </div>
                 </div>

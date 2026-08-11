@@ -209,4 +209,15 @@ __marimo__/
 # Project runtime logs and memory
 logs/*.json
 logs/*.log
-node_modules/
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+frontend/.env.local
+frontend/.env.production
+
+# Root-level node files (should be in frontend/)
+/node_modules/
+/package.json
+/package-lock.json

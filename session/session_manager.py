@@ -1,8 +1,9 @@
-"""Session management for persisting user sessions across requests."""
+"""Session management — creates and tracks isolated per-session memory."""
 import uuid
 import time
 import logging
-from typing import Tuple, Dict, Any, Optional, List
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 
 from memory.short_term import ShortTermMemory
@@ -11,106 +12,126 @@ from config.config import MEMORY_FILE
 
 logger = logging.getLogger(__name__)
 
+# Base directory for per-session LTM files.
+# Each session gets its own JSON file: logs/sessions/<session_id>.json
+_SESSION_LTM_DIR = Path("logs/sessions")
+
 
 class SessionStore:
-    """In-memory session store that maintains STM and LTM for each session."""
-    
-    def __init__(self):
-        """Initialize the session store."""
+    """In-memory registry of active sessions.
+
+    Each session has:
+    * An isolated ``ShortTermMemory`` buffer.
+    * An isolated ``LongTermMemory`` backed by its own JSON file under
+      ``logs/sessions/<session_id>.json``.
+
+    This prevents cross-session memory leakage that existed when all
+    sessions shared a single LTM instance.
+    """
+
+    def __init__(self) -> None:
         self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._shared_ltm = LongTermMemory()
-    
-    def get_or_create(self, session_id: Optional[str] = None, ltm_path: Optional[str] = None, goal: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
-        """Get an existing session or create a new one if it doesn't exist.
-        
+        _SESSION_LTM_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── Core operations ───────────────────────────────────────────────────────
+
+    def get_or_create(
+        self,
+        session_id: Optional[str] = None,
+        goal: Optional[str] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Return an existing session or create a new one.
+
         Args:
-            session_id: Optional session ID. If None, a new UUID will be generated.
-            ltm_path: Optional path for per-session LTM storage. If None, uses shared LTM.
-            
+            session_id: Reuse this ID if it already exists; generate a new
+                        UUID if ``None``.
+            goal:       Optional label for the session goal (stored on
+                        creation only — not overwritten on reuse).
+
         Returns:
-            Tuple of (session_id, session_data) containing stm, ltm, created_at, last_used
+            ``(session_id, session_data)`` where ``session_data`` has keys
+            ``stm``, ``ltm``, ``created_at``, ``last_used``, ``goal``,
+            ``status``.
         """
         if session_id is None:
             session_id = str(uuid.uuid4())
-        
+
         if session_id in self._sessions:
             session = self._sessions[session_id]
             session["last_used"] = time.time()
-            logger.info(f"Reusing existing session: {session_id}")
+            logger.debug("Reusing session: %s", session_id)
             return session_id, session
-        
+
+        # New session — give it its own LTM file
+        ltm_path = _SESSION_LTM_DIR / f"{session_id}.json"
         now = time.time()
-        if ltm_path:
-            ltm = LongTermMemory(storage_file=ltm_path)
-        else:
-            ltm = self._shared_ltm
-            
-        stm = ShortTermMemory()
-        session = {
-            "stm": stm,
-            "ltm": ltm,
+        session: Dict[str, Any] = {
+            "stm": ShortTermMemory(),
+            "ltm": LongTermMemory(storage_file=str(ltm_path)),
             "created_at": now,
             "last_used": now,
             "goal": goal,
             "status": "idle",
         }
-        
         self._sessions[session_id] = session
-        logger.info(f"Created new session: {session_id}")
+        logger.info("Created new session: %s (ltm=%s)", session_id, ltm_path)
         return session_id, session
-    
+
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get a session by ID."""
+        """Return session data by ID, or ``None`` if not found."""
         return self._sessions.get(session_id)
-    
+
     def list_sessions(self) -> List[Dict[str, Any]]:
-        """List all sessions with metadata."""
-        sessions = []
+        """Return summary metadata for all active sessions, newest-first."""
+        summaries = []
         for sid, data in self._sessions.items():
-            sessions.append({
-                "id": sid,
-                "created_at": datetime.fromtimestamp(data["created_at"]).isoformat(),
-                "last_used": datetime.fromtimestamp(data["last_used"]).isoformat(),
-                "goal": data.get("goal"),
-                "status": data.get("status", "idle"),
-            })
-        sessions.sort(key=lambda s: s["last_used"], reverse=True)
-        return sessions
-    
+            summaries.append(
+                {
+                    "id": sid,
+                    "created_at": datetime.fromtimestamp(data["created_at"]).isoformat(),
+                    "last_used": datetime.fromtimestamp(data["last_used"]).isoformat(),
+                    "goal": data.get("goal"),
+                    "status": data.get("status", "idle"),
+                }
+            )
+        summaries.sort(key=lambda s: s["last_used"], reverse=True)
+        return summaries
+
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session by ID."""
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-            logger.info(f"Deleted session: {session_id}")
-            return True
-        return False
-    
-    def cleanup_stale(self, max_age_seconds: int = 3600) -> int:
-        """Remove sessions that haven't been used in max_age_seconds.
-        
-        Args:
-            max_age_seconds: Maximum time in seconds since last use to keep a session.
-            
+        """Remove a session from the store.
+
+        Does NOT delete the LTM file — history is preserved on disk.
+
         Returns:
-            Number of sessions that were cleaned up
+            ``True`` if the session existed and was removed.
         """
-        now = time.time()
-        stale_session_ids = []
-        
-        for session_id, session in self._sessions.items():
-            if now - session["last_used"] > max_age_seconds:
-                stale_session_ids.append(session_id)
-        
-        for session_id in stale_session_ids:
-            del self._sessions[session_id]
-            logger.info(f"Cleaned up stale session: {session_id}")
-            
-        return len(stale_session_ids)
-    
+        if session_id not in self._sessions:
+            return False
+        del self._sessions[session_id]
+        logger.info("Deleted session: %s", session_id)
+        return True
+
+    def cleanup_stale(self, max_age_seconds: int = 3600) -> int:
+        """Remove sessions idle for longer than *max_age_seconds*.
+
+        Returns:
+            Number of sessions removed.
+        """
+        cutoff = time.time() - max_age_seconds
+        stale = [
+            sid
+            for sid, data in self._sessions.items()
+            if data["last_used"] < cutoff
+        ]
+        for sid in stale:
+            del self._sessions[sid]
+            logger.info("Cleaned up stale session: %s", sid)
+        return len(stale)
+
     def get_session_count(self) -> int:
-        """Get the current number of active sessions."""
+        """Return the number of currently active (in-memory) sessions."""
         return len(self._sessions)
 
 
-# Global session store instance
+# Module-level singleton — shared across all request handlers
 session_store = SessionStore()

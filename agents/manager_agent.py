@@ -1,285 +1,252 @@
-"""Manager agent orchestrating the agentic system workflow."""
+"""Manager agent — orchestrates the Plan → Execute → Critique → Refine loop."""
 import re
-from typing import Any, List, Generator, Dict
+import time
+import logging
+from typing import Any, List, Generator, Dict, Optional
+
 from config.config import MAX_ITERATIONS
+
+logger = logging.getLogger(__name__)
+
+# Hard upper bound on wall-clock time per run (seconds).
+# Prevents a single request from blocking the server indefinitely.
+_MAX_RUN_SECONDS = 300
 
 
 class ManagerAgent:
-    """Orchestrates planning, execution, and criticism cycle."""
+    """Orchestrates planning, execution, critique, and optional refinement.
 
-    def __init__(self, planner: Any, executor: Any, critic: Any, ltm: Any, enable_tools: bool = True) -> None:
-        """Initialize the manager agent.
+    Architecture
+    ------------
+    * ``MAX_ITERATIONS == 1`` → *simple mode*: a single, comprehensive LLM
+      call via the Executor.  Useful when API rate limits are tight.
+    * ``MAX_ITERATIONS >= 2`` → *agentic mode*: Planner creates a plan,
+      Executor works through each step (with optional tool use), Critic
+      evaluates each result, and the Manager refines the plan if needed.
 
-        Args:
-            planner: PlannerAgent instance
-            executor: ExecutorAgent instance
-            critic: CriticAgent instance
-            ltm: Long-term memory instance
-            enable_tools: Whether to enable tool calling for the executor (default: True)
-        """
+    Observability events (yielded by ``run_streaming``)
+    ---------------------------------------------------
+    ``plan``         – Planner produced / revised a plan.
+    ``step_start``   – About to execute a step.
+    ``tool_call``    – A tool was invoked (name, input, output, status).
+    ``step_result``  – Step execution finished.
+    ``critique``     – Critic evaluated a step result.
+    ``complete``     – Final result ready.
+    ``error``        – An error occurred.
+    """
+
+    def __init__(
+        self,
+        planner: Any,
+        executor: Any,
+        critic: Any,
+        ltm: Any,
+        enable_tools: bool = True,
+    ) -> None:
         self.planner = planner
         self.executor = executor
         self.critic = critic
         self.ltm = ltm
         self.enable_tools = enable_tools
 
+    # ── Public API ────────────────────────────────────────────────────────────
+
     def run(self, goal: str) -> List[str]:
-        """Execute the goal through planning, execution, and refinement cycles.
+        """Run synchronously; collect and return all result strings."""
+        results: List[str] = []
+        deadline = time.time() + _MAX_RUN_SECONDS
 
-        Args:
-            goal: The goal to accomplish
+        for event in self.run_streaming(goal):
+            if time.time() > deadline:
+                logger.error("Run exceeded maximum allowed time (%ds).", _MAX_RUN_SECONDS)
+                break
+            if event["type"] == "complete":
+                results.append(event["result"])
+            elif event["type"] == "step_result":
+                results.append(event["content"])
 
-        Returns:
-            List of final improved results
-        """
-        # For simple tasks, use a single comprehensive approach to avoid rate limits
+        # Deduplicate — complete already contains an aggregated result
+        if len(results) > 1 and results[-1] == "\n\n".join(results[:-1]):
+            return [results[-1]]
+        return results
+
+    def run_streaming(
+        self, goal: str
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Execute the goal and yield structured observability events."""
+        deadline = time.time() + _MAX_RUN_SECONDS
+
         if MAX_ITERATIONS <= 1:
-            return self._run_simple_mode(goal)
-
-        # For complex tasks, use the full multi-step approach
-        return self._run_full_mode(goal)
-        
-    def run_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
-        """Execute the goal through planning, execution, and refinement cycles, yielding progress events.
-        
-        Args:
-            goal: The goal to accomplish
-            
-        Yields:
-            Dict containing event type and content at each stage of execution
-        """
-        # For simple tasks, use streaming simple mode
-        if MAX_ITERATIONS <= 1:
-            yield from self._run_simple_mode_streaming(goal)
+            yield from self._run_simple_mode_streaming(goal, deadline)
         else:
-            # For complex tasks, use streaming full mode
-            yield from self._run_full_mode_streaming(goal)
+            yield from self._run_full_mode_streaming(goal, deadline)
 
-    def _run_simple_mode(self, goal: str) -> List[str]:
-        """Run in simple mode with minimal API calls.
+    # ── Simple mode (MAX_ITERATIONS == 1) ────────────────────────────────────
 
-        Args:
-            goal: The goal to accomplish
+    def _run_simple_mode_streaming(
+        self, goal: str, deadline: float
+    ) -> Generator[Dict[str, Any], None, None]:
+        prompt = (
+            "You are an expert AI assistant. Complete this task comprehensively:\n\n"
+            f"Goal: {goal}\n\n"
+            "Provide a complete, high-quality solution with:\n"
+            "1. Clear steps or implementation\n"
+            "2. Best practices and considerations\n"
+            "3. Any relevant examples or code\n\n"
+            "Be thorough but concise."
+        )
 
-        Returns:
-            List of results
-        """
-        prompt = f"""You are an expert AI assistant. Complete this task comprehensively:
-
-Goal: {goal}
-
-Provide a complete, high-quality solution with:
-1. Clear steps or implementation
-2. Best practices and considerations
-3. Any relevant examples or code
-
-Be thorough but concise."""
-
+        yield {"type": "step_start", "step": goal, "agent": "Executor"}
         result = self.executor.think(prompt)
-        self.ltm.save(f"Simple execution: {result}")
-        return [result]
-        
-    def _run_simple_mode_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
-        """Run in simple mode with streaming output.
-        
-        Args:
-            goal: The goal to accomplish
-            
-        Yields:
-            Event dicts with execution progress
-        """
-        prompt = f"""You are an expert AI assistant. Complete this task comprehensively:
-
-Goal: {goal}
-
-Provide a complete, high-quality solution with:
-1. Clear steps or implementation
-2. Best practices and considerations
-3. Any relevant examples or code
-
-Be thorough but concise."""
-        
-        yield {"type": "step_start", "step": "Executing simple mode task", "agent": "Executor"}
-        result = self.executor.think(prompt)
-        self.ltm.save(f"Simple execution: {result}")
+        try:
+            self.ltm.save(f"Goal: {goal}\nResult: {result}")
+        except Exception:
+            logger.warning("LTM save failed in simple mode — continuing.")
         yield {"type": "step_result", "content": result, "agent": "Executor"}
         yield {"type": "complete", "result": result}
 
-    def _run_full_mode(self, goal: str) -> List[str]:
-        """Run in full agentic mode with multiple iterations.
+    # ── Full agentic mode (MAX_ITERATIONS >= 2) ───────────────────────────────
 
-        Args:
-            goal: The goal to accomplish
+    def _run_full_mode_streaming(
+        self, goal: str, deadline: float
+    ) -> Generator[Dict[str, Any], None, None]:
+        # ---- Planning -------------------------------------------------------
+        yield {"type": "plan", "content": "Creating execution plan…"}
+        plan_text = self.planner.create_plan(goal)
+        yield {"type": "plan", "content": plan_text}
 
-        Returns:
-            List of final improved results
-        """
-        plan = self.planner.create_plan(goal)
-        steps = self._parse_steps(plan)
-        if not steps:
-            steps = [plan]
-
+        steps = self._parse_steps(plan_text) or [plan_text]
         final_results: List[str] = []
-        accumulated_critiques = ""
+        accumulated_critiques: List[str] = []
 
         for iteration in range(MAX_ITERATIONS):
-            iteration_results: List[str] = []
-            iteration_critiques: List[str] = []
+            if time.time() > deadline:
+                logger.error("Deadline exceeded at iteration %d.", iteration)
+                yield {"type": "error", "message": "Execution time limit reached."}
+                break
 
-            for step in steps:
-                if self.enable_tools:
-                    result = self.executor.execute_task_with_tools(step)
-                else:
-                    result = self.executor.execute_task(step)
-                critique = self.critic.critique(result)
+            iter_results: List[str] = []
+            iter_critiques: List[str] = []
 
-                if self._is_acceptable(critique):
-                    iteration_results.append(result)
-                else:
-                    improved_prompt = f"""
-Improve the result using this critique.
+            for step_idx, step in enumerate(steps):
+                if time.time() > deadline:
+                    break
 
-Result:
-{result}
+                yield {
+                    "type": "step_start",
+                    "step": step,
+                    "agent": "Executor",
+                    "iteration": iteration + 1,
+                    "step_number": step_idx + 1,
+                    "total_steps": len(steps),
+                }
 
-Critique:
-{critique}
-"""
-                    improved = self.executor.think(improved_prompt)
-                    iteration_results.append(improved)
-                    iteration_critiques.append(f"Step: {step}\nCritique: {critique}")
+                # ---- Execute ------------------------------------------------
+                try:
+                    if self.enable_tools:
+                        result, tool_events = self.executor.execute_task_with_tools(step)
+                        # Surface tool invocations individually
+                        for ev in tool_events:
+                            yield {
+                                "type": "tool_call",
+                                "tool": ev["tool"],
+                                "input": ev["input"],
+                                "output": ev["output"],
+                                "status": ev["status"],
+                            }
+                    else:
+                        result = self.executor.execute_task(step)
+                        tool_events = []
+                except Exception as exc:
+                    logger.exception("Executor raised an error on step: %s", step)
+                    result = f"Error executing step: {exc}"
+                    tool_events = []
 
-            final_results.extend(iteration_results)
-            self.ltm.save(f"Iteration {iteration}: " + "\n".join(iteration_results))
-
-            if iteration < MAX_ITERATIONS - 1 and iteration_critiques:
-                accumulated_critiques += "\n".join(iteration_critiques) + "\n"
-                next_plan = self.planner.think(self._plan_prompt(goal, accumulated_critiques))
-                next_steps = self._parse_steps(next_plan)
-                if next_steps:
-                    steps = next_steps
-
-        return final_results
-        
-    def _run_full_mode_streaming(self, goal: str) -> Generator[Dict[str, Any], None, None]:
-        """Run in full agentic mode with streaming output.
-        
-        Args:
-            goal: The goal to accomplish
-            
-        Yields:
-            Event dicts with execution progress
-        """
-        yield {"type": "plan", "content": "Creating execution plan..."}
-        plan = self.planner.create_plan(goal)
-        yield {"type": "plan", "content": plan}
-        
-        steps = self._parse_steps(plan)
-        if not steps:
-            steps = [plan]
-
-        final_results: List[str] = []
-        accumulated_critiques = ""
-
-        for iteration in range(MAX_ITERATIONS):
-            iteration_results: List[str] = []
-            iteration_critiques: List[str] = []
-
-            for step in steps:
-                yield {"type": "step_start", "step": step, "agent": "Executor"}
-
-                if self.enable_tools:
-                    result = self.executor.execute_task_with_tools(step)
-                else:
-                    result = self.executor.execute_task(step)
                 yield {"type": "step_result", "content": result, "agent": "Executor"}
-                
-                yield {"type": "critique", "content": "Evaluating result..."}
-                critique = self.critic.critique(result)
+
+                # ---- Critique -----------------------------------------------
+                try:
+                    critique = self.critic.critique(result)
+                except Exception as exc:
+                    logger.exception("Critic raised an error.")
+                    critique = f"Critique unavailable: {exc}"
+
                 yield {"type": "critique", "content": critique}
 
-                if self._is_acceptable(critique):
-                    iteration_results.append(result)
+                # ---- Refine if critique identifies issues --------------------
+                if not self._is_acceptable(critique):
+                    try:
+                        improved = self.executor.think(
+                            f"Improve the result using this critique.\n\n"
+                            f"Result:\n{result}\n\nCritique:\n{critique}"
+                        )
+                        iter_results.append(improved)
+                    except Exception:
+                        iter_results.append(result)
+                    iter_critiques.append(f"Step: {step}\nCritique: {critique}")
                 else:
-                    improved_prompt = f"""
-Improve the result using this critique.
+                    iter_results.append(result)
 
-Result:
-{result}
+            final_results.extend(iter_results)
 
-Critique:
-{critique}
-"""
-                    improved = self.executor.think(improved_prompt)
-                    iteration_results.append(improved)
-                    iteration_critiques.append(f"Step: {step}\nCritique: {critique}")
+            try:
+                self.ltm.save(
+                    f"Goal: {goal} | Iteration {iteration + 1}\n"
+                    + "\n".join(iter_results)
+                )
+            except Exception:
+                logger.warning("LTM save failed — continuing.")
 
-            final_results.extend(iteration_results)
-            self.ltm.save(f"Iteration {iteration}: " + "\n".join(iteration_results))
+            # ---- Re-plan if there are critiques and more iterations left -----
+            if iter_critiques and iteration < MAX_ITERATIONS - 1:
+                accumulated_critiques.extend(iter_critiques)
+                yield {"type": "plan", "content": "Refining plan based on feedback…"}
+                try:
+                    new_plan = self.planner.think(
+                        self._plan_prompt(goal, "\n".join(accumulated_critiques))
+                    )
+                    yield {"type": "plan", "content": new_plan}
+                    new_steps = self._parse_steps(new_plan)
+                    if new_steps:
+                        steps = new_steps
+                except Exception:
+                    logger.warning("Re-planning failed — keeping current steps.")
 
-            if iteration < MAX_ITERATIONS - 1 and iteration_critiques:
-                accumulated_critiques += "\n".join(iteration_critiques) + "\n"
-                yield {"type": "plan", "content": "Refining plan based on feedback..."}
-                next_plan = self.planner.think(self._plan_prompt(goal, accumulated_critiques))
-                yield {"type": "plan", "content": next_plan}
-                next_steps = self._parse_steps(next_plan)
-                if next_steps:
-                    steps = next_steps
-        
-        yield {"type": "complete", "result": "\n\n".join(final_results)}
+        final_output = "\n\n".join(final_results)
+        yield {"type": "complete", "result": final_output}
 
-    def _parse_steps(self, plan: str) -> List[str]:
-        """Extract numbered list items from a plan string.
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
-        Args:
-            plan: Raw plan text
-
-        Returns:
-            List of parsed step strings
-        """
+    @staticmethod
+    def _parse_steps(plan: str) -> List[str]:
+        """Extract numbered / bulleted items from a plan string."""
         steps: List[str] = []
         for line in plan.splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
-            match = re.match(r'^(?:\d+[\.\)]\s*|[-*]\s*)(.*)', stripped)
+            match = re.match(r"^(?:\d+[\.\)]\s*|[-*•]\s*)(.*)", stripped)
             if match:
-                steps.append(match.group(1).strip())
+                text = match.group(1).strip()
+                if text:
+                    steps.append(text)
         return steps
 
-    def _plan_prompt(self, goal: str, accumulated_critiques: str) -> str:
-        """Build a prompt for the planner that incorporates prior feedback.
+    @staticmethod
+    def _plan_prompt(goal: str, accumulated_critiques: str) -> str:
+        return (
+            "You are a strategic planning agent.\n"
+            "Break this goal into clear, executable steps.\n"
+            "Be concise and actionable.\n\n"
+            f"Goal:\n{goal}\n\n"
+            f"Previous iteration feedback:\n{accumulated_critiques}\n\n"
+            "Incorporate this feedback into your revised plan.\n\n"
+            "Return numbered steps with brief descriptions."
+        )
 
-        Args:
-            goal: The original goal
-            accumulated_critiques: Collected critiques from previous iterations
-
-        Returns:
-            Planning prompt string
-        """
-        return f"""You are a strategic planning agent.
-Break this goal into clear, executable steps.
-Be concise and actionable.
-
-Goal:
-{goal}
-
-Previous iteration feedback:
-{accumulated_critiques}
-Incorporate this feedback into your revised plan.
-
-Return numbered steps with brief descriptions.
-"""
-
-    def _is_acceptable(self, critique: str) -> bool:
-        """Heuristic check to skip improvement when critique indicates no issues.
-
-        Args:
-            critique: Critic output for a result
-
-        Returns:
-            True if the result should be kept as-is
-        """
+    @staticmethod
+    def _is_acceptable(critique: str) -> bool:
+        """Return True when the critique signals no significant issues."""
         lowered = critique.lower()
         no_issue_phrases = [
             "no issues",
@@ -289,6 +256,8 @@ Return numbered steps with brief descriptions.
             "satisfactory",
             "no problems",
             "no problem",
+            "well done",
+            "excellent",
         ]
         if any(phrase in lowered for phrase in no_issue_phrases):
             return True

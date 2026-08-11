@@ -95,8 +95,9 @@ export async function checkHealth(): Promise<{ status: string; message: string }
  * Session management endpoints
  */
 export async function getSessions(): Promise<Session[]> {
-  const { data } = await apiClient.get<Session[]>("/sessions");
-  return data;
+  const { data } = await apiClient.get<Session[] | { sessions: Session[] }>("/sessions");
+  // Handle both array and {sessions: [...]} shapes for robustness
+  return Array.isArray(data) ? data : (data as { sessions: Session[] }).sessions ?? [];
 }
 
 export async function createSession(goal?: string): Promise<Session> {

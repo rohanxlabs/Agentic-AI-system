@@ -35,14 +35,20 @@ copy .env.example .env
 # GROQ_API_KEY=your_api_key_here
 ```
 
-### Step 5: Run
+### 5. Run
 ```bash
 python main.py
 ```
 
-Then enter your goal:
+Then enter your goal when prompted. The agent will plan, execute, and display results.
+
+**Example:**
 ```
-Enter your autonomous goal: Write a Python function to check if a number is prime
+Enter your autonomous goal: Calculate the factorial of 5 using the calculator tool
+
+[Agent execution with tool calls...]
+
+✓ System completed successfully
 ```
 
 ## Installation (macOS/Linux)
@@ -95,44 +101,46 @@ Quantum computing harnesses quantum mechanics principles...
 
 ## Common Goals to Try
 
-### 1. Code Generation
+### 1. Multi-step with Tools
 ```
-Write a Python decorator that measures function execution time
-```
-
-### 2. Problem Analysis
-```
-Analyze the pros and cons of REST vs GraphQL APIs
+Research the current weather in Tokyo and tell me if I need an umbrella
 ```
 
-### 3. Content Creation
+### 2. Calculator Tool
 ```
-Write a blog post about machine learning in healthcare
-```
-
-### 4. Learning
-```
-Explain how blockchain technology works
+Calculate the compound interest on $1000 at 5% annual rate for 3 years
 ```
 
-### 5. Business
+### 3. Web Search Tool
 ```
-Create a marketing plan for a new SaaS product
+Find the latest Python version and list 3 new features
+```
+
+### 4. Planning Task
+```
+Create a 3-step plan to learn machine learning
+```
+
+### 5. Reasoning
+```
+Explain the difference between supervised and unsupervised learning
 ```
 
 ## Adjusting Settings
 
-For faster results, edit `.env`:
+Edit `.env` to customize behavior:
+
+**For faster results (simple mode):**
 ```
-MAX_ITERATIONS=2
+MAX_ITERATIONS=1
 TEMPERATURE=0.1
 ```
 
-For more detailed results:
+**For full agentic mode (planning + critique):**
 ```
-MAX_ITERATIONS=8
-TEMPERATURE=0.5
-MAX_TOKENS=4096
+MAX_ITERATIONS=3
+TEMPERATURE=0.3
+MAX_TOKENS=2048
 ```
 
 ## Viewing Results
@@ -174,17 +182,17 @@ pip install -r requirements.txt
 
 ## Next Steps
 
-1. **Read examples**: See [EXAMPLES.md](EXAMPLES.md)
-2. **Understand architecture**: See [README.md](README.md)
-3. **Development**: See [DEVELOPMENT.md](DEVELOPMENT.md)
-4. **All improvements**: See [IMPROVEMENTS.md](IMPROVEMENTS.md)
+1. **Try different goals**: Test the agent with multi-step tasks
+2. **Explore the API**: See [README.md](README.md#api-reference) for endpoints
+3. **Run tests**: `pytest tests/ -v` to see 122 passing tests
+4. **Customize**: Edit `.env` to adjust `MAX_ITERATIONS`, `TEMPERATURE`, etc.
 
 ## Getting Help
 
 1. Check logs: `logs/agentic_system.log`
-2. Review examples: [EXAMPLES.md](EXAMPLES.md)
-3. Check configuration: [README.md](README.md#configuration)
-4. Verify Groq API: [console.groq.com](https://console.groq.com)
+2. Review configuration: [README.md](README.md#configuration)
+3. Verify Groq API: [console.groq.com](https://console.groq.com)
+4. Run tests to verify setup: `pytest tests/ -v`
 
 ## Pro Tips
 

@@ -1,35 +1,50 @@
-"""Planner agent for breaking down goals into executable steps."""
-from typing import Any
+"""Planner agent — breaks a goal into numbered, executable steps."""
+import logging
 from agents.base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 
 class PlannerAgent(BaseAgent):
-    """Agent responsible for creating plans from goals."""
+    """Creates a step-by-step plan from a high-level goal.
+
+    The plan is a numbered list of concise, actionable items that the
+    Executor will work through one by one.
+    """
 
     def create_plan(self, goal: str) -> str:
-        """Create a detailed plan from a goal.
-        
+        """Produce a numbered execution plan for the given goal.
+
         Args:
-            goal: The objective to plan for
-            
+            goal: High-level objective to plan for.
+
         Returns:
-            Numbered steps as a string
+            A numbered-list plan as a string.
         """
-        # Retrieve relevant past memories
-        relevant_memories = self.ltm.recall_relevant(goal)
-        memory_section = ""
-        
-        if relevant_memories:
-            memory_section = "Relevant past experience (for context only, don't just repeat it):\n"
-            memory_section += "\n".join(relevant_memories) + "\n\n"
-        
-        prompt = f"""{memory_section}You are a strategic planning agent.
-Break this goal into clear, executable steps.
-Be concise and actionable.
+        memory_section = self._relevant_memory(goal)
 
-Goal:
-{goal}
-
-Return numbered steps with brief descriptions.
-"""
+        prompt = (
+            f"{memory_section}"
+            "You are a strategic planning agent.\n"
+            "Break the goal below into clear, concise, executable steps.\n"
+            "Each step should be a single, self-contained action.\n"
+            "Return ONLY a numbered list — no prose before or after.\n\n"
+            f"Goal:\n{goal}"
+        )
         return self.think(prompt)
+
+    # ---- private ------------------------------------------------------------
+
+    def _relevant_memory(self, goal: str) -> str:
+        try:
+            memories = self.ltm.recall_relevant(goal)
+        except Exception:
+            logger.warning("LTM recall failed during planning — skipping memory context.")
+            return ""
+        if not memories:
+            return ""
+        joined = "\n".join(memories)
+        return (
+            "Relevant past experience (context only — do not simply repeat):\n"
+            f"{joined}\n\n"
+        )

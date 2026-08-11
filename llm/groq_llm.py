@@ -2,7 +2,7 @@
 import os
 import logging
 import time
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from groq import Groq
 from dotenv import load_dotenv
@@ -13,42 +13,55 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+class LLMError(Exception):
+    """Raised when the LLM call fails after all retries."""
+
+
 class GroqLLM:
-    """Interface to Groq language model API."""
+    """Interface to the Groq language model API."""
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        """Initialize Groq LLM client.
+        """Initialise the Groq client.
 
         Args:
-            api_key: Groq API key (uses env var if not provided)
+            api_key: Groq API key (reads GROQ_API_KEY env-var if omitted).
 
         Raises:
-            ValueError: If API key is not available
+            ValueError: If no API key is available.
         """
         key = api_key or os.getenv("GROQ_API_KEY")
         if not key:
             raise ValueError("GROQ_API_KEY not found in environment variables")
-
         self.client = Groq(api_key=key)
 
-    def call(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
-        """Call the Groq API with a prompt.
+    # ------------------------------------------------------------------
+    # Simple text call
+    # ------------------------------------------------------------------
+
+    def call(
+        self,
+        prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Call Groq with a plain text prompt.
+
+        Retries on rate-limit errors with exponential back-off.
 
         Args:
-            prompt: Input prompt for the model
-            temperature: Sampling temperature (0.0-2.0)
-            max_tokens: Maximum response length
+            prompt: Input text for the model.
+            temperature: Sampling temperature (0.0–2.0).
+            max_tokens: Maximum tokens in the response.
 
         Returns:
-            Model response text
+            Model response text (never empty — raises on failure).
 
         Raises:
-            Exception: If API call fails after retries
+            LLMError: If the API call fails after all retries.
         """
-        max_retries = RETRY_ATTEMPTS
-        last_exception = None
+        last_exception: Optional[Exception] = None
 
-        for attempt in range(1, max_retries + 1):
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
             try:
                 response = self.client.chat.completions.create(
                     model=MODEL_NAME,
@@ -57,37 +70,70 @@ class GroqLLM:
                     max_tokens=max_tokens,
                     timeout=API_TIMEOUT,
                 )
-                return response.choices[0].message.content.strip()
-            except Exception as e:
+                content = response.choices[0].message.content
+                if not content:
+                    raise LLMError("LLM returned an empty response")
+                return content.strip()
+            except Exception as exc:
                 is_rate_limit = (
-                    getattr(e, "__class__", None).__name__ == "RateLimitError"
-                    or getattr(e, "status_code", None) == 429
-                    or "rate limit" in str(e).lower()
+                    type(exc).__name__ == "RateLimitError"
+                    or getattr(exc, "status_code", None) == 429
+                    or "rate limit" in str(exc).lower()
                 )
                 if not is_rate_limit:
-                    raise
-                last_exception = e
-                if attempt < max_retries:
+                    raise LLMError(f"LLM call failed: {exc}") from exc
+
+                last_exception = exc
+                if attempt < RETRY_ATTEMPTS:
                     wait = 2 ** (attempt - 1)
                     logger.warning(
-                        f"Rate limit hit (attempt {attempt}/{max_retries}), retrying in {wait}s"
+                        "Rate limit hit (attempt %d/%d), retrying in %ds",
+                        attempt,
+                        RETRY_ATTEMPTS,
+                        wait,
                     )
                     time.sleep(wait)
 
-        logger.error(f"Rate limit exceeded after {max_retries} attempts")
-        raise last_exception
+        raise LLMError(
+            f"Rate limit exceeded after {RETRY_ATTEMPTS} attempts"
+        ) from last_exception
 
-    def call_with_tools(self, messages: list, tools: list, temperature: float = 0.3, max_tokens: int = 2048) -> dict:
-        """Call the Groq API with tool support.
-        
+    # ------------------------------------------------------------------
+    # Tool-calling  (OpenAI / Groq function-calling protocol)
+    # ------------------------------------------------------------------
+
+    def call_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> Dict[str, Any]:
+        """Call Groq with tool-calling support.
+
+        Returns a dict that preserves the ``id`` field on every tool-call
+        so callers can build correctly formatted ``role="tool"`` result
+        messages (required by the Groq / OpenAI protocol).
+
         Args:
-            messages: Full conversation messages list in OpenAI format
-            tools: List of tool schemas in OpenAI format
-            temperature: Sampling temperature (0.0-2.0)
-            max_tokens: Maximum response length
-            
+            messages: Conversation history in OpenAI message format.
+            tools: Tool schemas in OpenAI function-calling format.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens in the response.
+
         Returns:
-            Dictionary with content and tool_calls from the API response
+            ``{"content": str | None, "tool_calls": [...]}``
+
+            Each tool-call entry has the shape::
+
+                {
+                    "id":        str,          # call ID — MUST be echoed back
+                    "name":      str,
+                    "arguments": dict,
+                }
+
+        Raises:
+            LLMError: If the API call fails (never silently swallowed).
         """
         try:
             response = self.client.chat.completions.create(
@@ -99,16 +145,26 @@ class GroqLLM:
                 max_tokens=max_tokens,
                 timeout=API_TIMEOUT,
             )
-            message = response.choices[0].message
-            return {
-                "content": message.content.strip() if message.content else None,
-                "tool_calls": [
+        except Exception as exc:
+            raise LLMError(f"Tool call failed: {exc}") from exc
+
+        message = response.choices[0].message
+        content: Optional[str] = message.content.strip() if message.content else None
+
+        tool_calls: List[Dict[str, Any]] = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                try:
+                    import json
+                    arguments = json.loads(tc.function.arguments)
+                except (ValueError, TypeError):
+                    arguments = {}
+                tool_calls.append(
                     {
+                        "id": tc.id,          # preserved — needed for role="tool" messages
                         "name": tc.function.name,
-                        "arguments": __import__("json").loads(tc.function.arguments)
-                    } for tc in message.tool_calls
-                ] if message.tool_calls else []
-            }
-        except Exception as e:
-            logger.error(f"Tool call failed: {str(e)}")
-            return {"content": None, "tool_calls": []}
+                        "arguments": arguments,
+                    }
+                )
+
+        return {"content": content, "tool_calls": tool_calls}
